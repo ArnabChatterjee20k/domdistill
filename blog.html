@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Understanding HTTP Servers: From Basics to Real-World Systems</title>
+</head>
+<body>
+
+<h1>Understanding HTTP Servers</h1>
+<p>HTTP servers are the backbone of the modern web. Every time you open a website, send a request, or interact with an API, an HTTP server is responsible for handling that communication.</p>
+
+<h2>What is an HTTP Server?</h2>
+<p>An HTTP server is a system that listens for incoming HTTP requests from clients (usually browsers) and returns responses. These responses can be HTML pages, JSON data, images, or other resources.</p>
+
+<h3>Basic Flow</h3>
+<ul>
+  <li>Client sends a request (GET /index.html)</li>
+  <li>Server processes the request</li>
+  <li>Server returns a response (status + data)</li>
+</ul>
+
+<h2>How HTTP Servers Work Internally</h2>
+<p>At a high level, an HTTP server performs three main tasks: listening, parsing, and responding.</p>
+
+<h3>1. Listening for Connections</h3>
+<p>The server binds to a port (like 80 or 443) and waits for incoming TCP connections.</p>
+
+<h3>2. Parsing Requests</h3>
+<p>Once a connection is established, the server reads raw bytes and parses them into structured HTTP requests.</p>
+
+<pre><code>
+GET /home HTTP/1.1
+Host: example.com
+</code></pre>
+
+<h3>3. Generating Responses</h3>
+<p>The server processes the request and sends back a response with headers and body.</p>
+
+<pre><code>
+HTTP/1.1 200 OK
+Content-Type: text/html
+</code></pre>
+
+<h2>Types of HTTP Servers</h2>
+
+<h3>1. Static Servers</h3>
+<p>Serve files directly from disk without any processing.</p>
+
+<h3>2. Dynamic Servers</h3>
+<p>Execute code (like Python, Node.js, or PHP) before returning a response.</p>
+
+<h3>3. Reverse Proxies</h3>
+<p>Act as intermediaries between clients and backend servers.</p>
+
+<h2>Concurrency Models</h2>
+
+<h3>Thread-Based</h3>
+<p>Each request is handled in a separate thread. Easy to implement but can be resource-heavy.</p>
+
+<h3>Event-Driven</h3>
+<p>Uses non-blocking I/O and an event loop (like Node.js). More scalable for high traffic.</p>
+
+<h3>Hybrid Models</h3>
+<p>Combine multiple strategies to balance performance and simplicity.</p>
+
+<h2>Performance Considerations</h2>
+
+<h3>1. Latency</h3>
+<p>Time taken to respond to a request.</p>
+
+<h3>2. Throughput</h3>
+<p>Number of requests handled per second.</p>
+
+<h3>3. Caching</h3>
+<p>Using caching can drastically improve performance.</p>
+
+<h2>Security Basics</h2>
+
+<ul>
+  <li>Use HTTPS instead of HTTP</li>
+  <li>Validate inputs to prevent attacks</li>
+  <li>Use proper authentication mechanisms</li>
+</ul>
+
+<h2>Key Takeaways</h2>
+<ul>
+  <li>HTTP servers handle communication between client and server</li>
+  <li>Different models exist for handling concurrency</li>
+  <li>Performance and security are critical considerations</li>
+</ul>
+
+<h2>Conclusion</h2>
+<p>Understanding HTTP servers helps you build better backend systems and reason about performance, scalability, and reliability.</p>
+
+</body>
+</html>
