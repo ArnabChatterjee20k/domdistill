@@ -11,3 +11,7 @@ wheels/
 
 models/
 *.pkl
+.pytest_cache/
+.ruff_cache/
+.coverage
+benchmarks/.results/

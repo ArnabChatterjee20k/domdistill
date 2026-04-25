@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+import hashlib
+import pickle
+from pathlib import Path
+
+from lxml import html
+
+from .models import Node, SplittedDomNodes
+
+SPLITTER_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+
+
+def _cache_key(html_content: str) -> str:
+    return hashlib.sha256(html_content.encode("utf-8")).hexdigest()
+
+
+def split_dom(html_content: str, cache_dir: str | Path | None = None) -> list[SplittedDomNodes]:
+    if cache_dir is not None:
+        cache_path = Path(cache_dir)
+        cache_path.mkdir(parents=True, exist_ok=True)
+        cached_file = cache_path / f"split_dom_{_cache_key(html_content)}.pkl"
+        if cached_file.exists():
+            with cached_file.open("rb") as handle:
+                return pickle.load(handle)
+
+    tree = html.fromstring(html_content)
+    dom_nodes: list[Node] = []
+
+    for element in tree.iter():
+        tag = getattr(element, "tag", "")
+        if not isinstance(tag, str):
+            continue
+        text = " ".join(part.strip() for part in element.xpath("./text()") if part and part.strip())
+        if not text:
+            continue
+        dom_nodes.append(Node(tag=tag.lower(), content=text))
+
+    sections: list[SplittedDomNodes] = []
+    current_heading = Node(tag="root", content="root")
+    current_nodes: list[Node] = []
+
+    for node in dom_nodes:
+        if node.tag in SPLITTER_TAGS:
+            if current_nodes:
+                sections.append(SplittedDomNodes(heading=current_heading, nodes=current_nodes))
+            current_heading = node
+            current_nodes = []
+        else:
+            current_nodes.append(node)
+
+    if current_nodes:
+        sections.append(SplittedDomNodes(heading=current_heading, nodes=current_nodes))
+
+    if cache_dir is not None:
+        with cached_file.open("wb") as handle:
+            pickle.dump(sections, handle)
+
+    return sections
