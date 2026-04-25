@@ -1,41 +1,160 @@
-Intent driven chunking for a dom
-We will take each nodes and will do combinations on each nodes
-Example
+# domdistill
+
+Intent-driven semantic chunk distillation for DOM/HTML content.
+
+The library splits HTML into heading-aware sections, scores merged text chunks using
+query and local-heading relevance, and uses dynamic programming to choose the best
+set of selected chunks.
+
+## Install
+
+```bash
+pip install -e .
 ```
-nodes = [n1,n2,n3]
-So a good intent chunk is which either answers the query or the local heading
-So a good chunk is n1+n2+n3 or n1+n2 , n3 or n1+n3,n2, ... 2^3 combinations
-Here comes the dp optimisation
+
+For development:
+
+```bash
+pip install -e ".[dev]"
 ```
-Steps
-1. Splitting of the dom based on h1, h2, h3, etc
-2. Each will have nodes under it. They are the DP units/chunks
-3. score(Chunk) = max(
-    sim(Chunk, query),      # global intent
-    sim(Chunk, heading)     # local intent
+
+## CLI Usage
+
+Run the synthetic demo:
+
+```bash
+python -m domdistill demo
+```
+
+Run distillation on a local HTML file:
+
+```bash
+python -m domdistill file benchmarks/blog.html --query "how http servers work" --section-index 0
+```
+
+## Library Usage
+
+```python
+from domdistill import HTMLIntentChunker
+
+html_content = "<h1>Intro</h1><p>HTTP servers accept requests.</p><p>Caching helps.</p>"
+chunker = HTMLIntentChunker(
+    html_content,
+    penalty=0.01,
+    splitter_tags=("h1", "h2", "h3"),  # user-configurable
 )
-4. Lets add a penalty as well so that score doesn't deviate a lot
-score(C) =
-    max(sim_query, sim_heading)
-    - λ * (length(C) ** 2)
-5. total_score =
-    sum(score(C_i)) - β * num_chunks
+result = chunker.get_chunks("http server basics")
 
-6. So a resultant chunk would have this structure
-```
-{
-  "content": "...",
-  "heading": "...",
-  "sim_query": 0.82,
-  "sim_heading": 0.91,
-  "density": 0.76,
-  "position": 0.3
-}
+print(result.score)
+print(result.selected_chunks)
+print(result.discarded_chunks)
 ```
 
-dp[i] = best score till node i
-dp[j] = max over i < j:
-    dp[i] + score(nodes[i+1 → j]) - β
+## Discrete Building Blocks (and Glueing)
 
-Why not any already present solutions?
-I am trying to a build generalized solution for info gather through web scraping. And for this I need some heuristic formulation as well. So this sematic distillation helps
+Use the high-level `HTMLIntentChunker` when you want a single entrypoint.
+If you need custom behavior, you can use lower-level modules directly and glue
+them together in your own pipeline.
+
+### 1) Split HTML into sections
+
+```python
+from domdistill.dom_split import split_dom
+
+sections = split_dom(
+    html_content,
+    splitter_tags=("h1", "h2", "h3"),  # custom heading tags
+    cache_dir=".cache/dom_split",      # optional deterministic cache
+)
+```
+
+### 2) Score/select chunks for one section
+
+```python
+from domdistill.selection import get_chunks
+
+section = sections[0]
+chunks = [node.content for node in section.nodes if node.content.strip()]
+score, selected, discarded = get_chunks(
+    chunks=chunks,
+    query="http server basics",
+    heading=section.heading.content,
+    penalty=0.01,
+)
+```
+
+### 3) Custom embedder injection (for tests or custom models)
+
+```python
+import numpy as np
+from domdistill.selection import get_chunks
+
+def my_embedder(text: str) -> np.ndarray:
+    # Plug in your own model/provider here.
+    return np.asarray([float(len(text))], dtype=float)
+
+score, selected, discarded = get_chunks(
+    chunks=["a", "b", "c"],
+    query="sample",
+    heading="intro",
+    penalty=0.01,
+    embedding_fn=my_embedder,
+)
+```
+
+### 4) Glue everything across all sections
+
+```python
+from domdistill.dom_split import split_dom
+from domdistill.selection import get_chunks
+
+results = []
+for idx, section in enumerate(split_dom(html_content, splitter_tags=("h1", "h2"))):
+    chunks = [node.content for node in section.nodes if node.content.strip()]
+    if not chunks:
+        continue
+    score, selected, discarded = get_chunks(
+        chunks=chunks,
+        query="what should I extract?",
+        heading=section.heading.content,
+        penalty=0.01,
+    )
+    results.append(
+        {
+            "section_index": idx,
+            "heading": section.heading.content,
+            "score": score,
+            "selected": selected,
+            "discarded": discarded,
+        }
+    )
+```
+
+Use this discrete approach when you need custom ranking logic, extra metadata,
+or post-processing that differs from the default high-level API behavior.
+
+## Testing
+
+Run default unit tests:
+
+```bash
+pytest
+```
+
+Run integration tests (loads embedding model):
+
+```bash
+pytest -m integration
+```
+
+## Benchmarking
+
+Benchmark split, scoring, and selection:
+
+```bash
+python benchmarks/bench_split.py --html-file benchmarks/blog.html --repeat-factor 30 --iterations 30
+python benchmarks/bench_score.py --iterations 1000
+python benchmarks/bench_select.py --size 12 --iterations 50
+```
+
+Use fixed benchmark arguments when comparing revisions so regressions are meaningful.

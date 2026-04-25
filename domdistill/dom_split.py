@@ -11,15 +11,22 @@ from .models import Node, SplittedDomNodes
 SPLITTER_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 
 
-def _cache_key(html_content: str) -> str:
-    return hashlib.sha256(html_content.encode("utf-8")).hexdigest()
+def _cache_key(html_content: str, splitter_tags: tuple[str, ...]) -> str:
+    joined_tags = ",".join(splitter_tags)
+    content = f"{joined_tags}\n{html_content}"
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def split_dom(html_content: str, cache_dir: str | Path | None = None) -> list[SplittedDomNodes]:
+def split_dom(
+    html_content: str,
+    cache_dir: str | Path | None = None,
+    splitter_tags: tuple[str, ...] = SPLITTER_TAGS,
+) -> list[SplittedDomNodes]:
+    splitter_tags = tuple(tag.lower() for tag in splitter_tags)
     if cache_dir is not None:
         cache_path = Path(cache_dir)
         cache_path.mkdir(parents=True, exist_ok=True)
-        cached_file = cache_path / f"split_dom_{_cache_key(html_content)}.pkl"
+        cached_file = cache_path / f"split_dom_{_cache_key(html_content, splitter_tags)}.pkl"
         if cached_file.exists():
             with cached_file.open("rb") as handle:
                 return pickle.load(handle)
@@ -41,7 +48,7 @@ def split_dom(html_content: str, cache_dir: str | Path | None = None) -> list[Sp
     current_nodes: list[Node] = []
 
     for node in dom_nodes:
-        if node.tag in SPLITTER_TAGS:
+        if node.tag in splitter_tags:
             if current_nodes:
                 sections.append(SplittedDomNodes(heading=current_heading, nodes=current_nodes))
             current_heading = node

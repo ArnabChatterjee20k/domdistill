@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .dom_split import split_dom
+from .chunker import HTMLIntentChunker
 from .selection import get_chunks
 
 
@@ -34,26 +34,13 @@ def run_demo() -> dict:
 
 
 def run_file(path: Path, query: str, section_index: int = 0, penalty: float = 0.0001) -> dict:
-    html_content = path.read_text(encoding="utf-8")
-    sections = split_dom(html_content)
-    if not sections:
-        raise ValueError("No sections found in document.")
-    if section_index < 0 or section_index >= len(sections):
-        raise ValueError(f"section_index out of bounds (0..{len(sections)-1})")
-
-    section = sections[section_index]
-    chunks = [node.content for node in section.nodes if node.content.strip()]
-    score, selected_chunks, discarded_chunks = get_chunks(
-        chunks=chunks,
-        query=query,
-        heading=section.heading.content,
-        penalty=penalty,
-    )
+    chunker = HTMLIntentChunker.from_file(path, penalty=penalty)
+    result = chunker.get_chunks(query=query, section_index=section_index)
     return {
-        "heading": section.heading.content,
-        "score": score,
-        "selected_chunks": selected_chunks,
-        "discarded_chunks": discarded_chunks,
+        "heading": result.heading,
+        "score": result.score,
+        "selected_chunks": result.selected_chunks,
+        "discarded_chunks": result.discarded_chunks,
     }
 
 
