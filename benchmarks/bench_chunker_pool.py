@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import statistics
 import time
 from pathlib import Path
@@ -15,13 +16,12 @@ def build_large_html(path: Path, repeat_factor: int) -> str:
 
 
 def run_once(
-    html_content: str,
+    chunker: HTMLIntentChunker,
     query: str,
     top_k_chunks: int,
     pool_size: int,
     penalty: float,
 ) -> float:
-    chunker = HTMLIntentChunker(html_content, penalty=penalty)
     start = time.perf_counter()
     chunker.get_chunks(query=query, top_k_chunks=top_k_chunks, pool_size=pool_size)
     return time.perf_counter() - start
@@ -35,6 +35,7 @@ def benchmark(
     top_k_chunks: int,
     penalty: float,
     pool_sizes: list[int],
+    warmup_runs: int,
 ) -> dict:
     html_content = build_large_html(html_file, repeat_factor)
     unique_pool_sizes = sorted(set(pool_sizes))
@@ -45,17 +46,28 @@ def benchmark(
     baseline_avg = None
 
     for pool_size in unique_pool_sizes:
+        chunker = HTMLIntentChunker(html_content, penalty=penalty)
+        for _ in range(warmup_runs):
+            run_once(
+                chunker=chunker,
+                query=query,
+                top_k_chunks=top_k_chunks,
+                pool_size=pool_size,
+                penalty=penalty,
+            )
+
         samples = [
             run_once(
-                html_content,
-                query,
-                top_k_chunks,
+                chunker=chunker,
+                query=query,
+                top_k_chunks=top_k_chunks,
                 pool_size=pool_size,
                 penalty=penalty,
             )
             for _ in range(iterations)
         ]
         latency_ms_avg = statistics.fmean(samples) * 1000.0
+        latency_ms_median = statistics.median(samples) * 1000.0
         if len(samples) > 1:
             latency_ms_p95 = statistics.quantiles(samples, n=20)[-1] * 1000.0
         else:
@@ -67,6 +79,7 @@ def benchmark(
             {
                 "pool_size": pool_size,
                 "latency_ms_avg": latency_ms_avg,
+                "latency_ms_median": latency_ms_median,
                 "latency_ms_p95": latency_ms_p95,
                 "speedup_vs_pool1_x": speedup_x,
             }
@@ -74,6 +87,7 @@ def benchmark(
 
     return {
         "iterations": iterations,
+        "warmup_runs": warmup_runs,
         "html_chars": len(html_content),
         "query": query,
         "pool_sizes": unique_pool_sizes,
@@ -89,6 +103,7 @@ def main() -> None:
     parser.add_argument("--query", default="concurrency models in http servers")
     parser.add_argument("--top-k-chunks", type=int, default=5)
     parser.add_argument("--penalty", type=float, default=0.01)
+    parser.add_argument("--warmup-runs", type=int, default=1)
     parser.add_argument(
         "--pool-sizes",
         default="1,2,4",
@@ -105,6 +120,7 @@ def main() -> None:
             top_k_chunks=args.top_k_chunks,
             penalty=args.penalty,
             pool_sizes=pool_sizes,
+            warmup_runs=args.warmup_runs,
         )
     )
 
