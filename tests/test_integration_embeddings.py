@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from domdistill.scoring import get_score_for_chunk
+from domdistill.selection import get_score_for_chunk
 
 
 @pytest.mark.integration

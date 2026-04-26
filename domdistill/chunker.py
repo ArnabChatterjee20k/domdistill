@@ -6,8 +6,7 @@ from pathlib import Path
 from .dom_split import SPLITTER_TAGS, split_dom
 from .embeddings import EmbeddingFn
 from .models import SplittedDomNodes
-from .scoring import get_score_for_chunk
-from .selection import get_chunks
+from .selection import get_chunks, get_score_for_chunk
 
 
 @dataclass(frozen=True)

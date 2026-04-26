@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-from domdistill.scoring import get_score_for_chunk
+from domdistill.selection import get_score_for_chunk
 
 
 def fake_embedder(text: str) -> np.ndarray:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from domdistill.scoring import get_cosine_similarity, get_score_for_chunk
+from domdistill.selection import get_cosine_similarity, get_score_for_chunk
 
 
 def test_get_cosine_similarity_handles_zero_vector():
