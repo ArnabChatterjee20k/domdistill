@@ -39,12 +39,14 @@ def run_file(
     penalty: float = 0.0001,
     top_k_chunks: int = 10,
     pool_size: int = 1,
+    batch_size: int = 25,
 ) -> dict:
     chunker = HTMLIntentChunker.from_file(path, penalty=penalty)
     result = chunker.get_chunks(
         query=query,
         top_k_chunks=top_k_chunks,
         pool_size=pool_size,
+        batch_size=batch_size,
     )
     return {
         "query": result.query,
@@ -73,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     file_parser.add_argument("--penalty", type=float, default=0.0001)
     file_parser.add_argument("--top-k-chunks", type=int, default=10)
     file_parser.add_argument("--pool-size", type=int, default=1)
+    file_parser.add_argument("--batch-size", type=int, default=25)
     file_parser.set_defaults(
         handler=lambda args: run_file(
             path=args.path,
@@ -80,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
             penalty=args.penalty,
             top_k_chunks=args.top_k_chunks,
             pool_size=args.pool_size,
+            batch_size=args.batch_size,
         )
     )
 

@@ -20,16 +20,15 @@ def get_score_for_chunk(
     chunk: str,
     penalty: float = 0.0001,
     embedding_fn: EmbeddingFn | None = None,
+    batch_size: int = 25,
 ) -> float:
-    embed = embedding_fn or get_embedding
-
-    @lru_cache(maxsize=None)
-    def embed_cached(text: str):
-        return np.asarray(embed(text), dtype=float)
-
-    query_embedding = embed_cached(query)
-    heading_embedding = embed_cached(heading)
-    chunk_embedding = embed_cached(chunk)
+    if embedding_fn is None:
+        vectors = get_embedding([query, heading, chunk], batch_size=batch_size)
+        query_embedding, heading_embedding, chunk_embedding = vectors
+    else:
+        query_embedding = np.asarray(embedding_fn(query), dtype=float)
+        heading_embedding = np.asarray(embedding_fn(heading), dtype=float)
+        chunk_embedding = np.asarray(embedding_fn(chunk), dtype=float)
 
     query_similarity_score = get_cosine_similarity(query_embedding, chunk_embedding)
     heading_similarity_score = get_cosine_similarity(heading_embedding, chunk_embedding)
@@ -43,6 +42,7 @@ def get_chunks(
     heading: str = "",
     penalty: float = 0.0001,
     embedding_fn: EmbeddingFn | None = None,
+    batch_size: int = 25,
 ) -> tuple[float, list[str], list[str]]:
     if chunks is None:
         chunks = []
@@ -56,6 +56,7 @@ def get_chunks(
             chunk=chunk,
             penalty=penalty,
             embedding_fn=embed,
+            batch_size=batch_size,
         )
 
     memo: dict[int, tuple[float, list[str], list[str]]] = {}

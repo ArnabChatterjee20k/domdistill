@@ -170,10 +170,16 @@ Benchmark split, scoring, and selection:
 python benchmarks/bench_split.py --html-file benchmarks/blog.html --repeat-factor 30 --iterations 30
 python benchmarks/bench_score.py --iterations 1000
 python benchmarks/bench_select.py --size 12 --iterations 50
-python benchmarks/bench_chunker_pool.py --html-file benchmarks/blog.html --repeat-factor 20 --iterations 5 --pool-sizes 1,2,4
+python benchmarks/bench_chunker_pool.py --html-file benchmarks/blog.html --repeat-factor 20 --warmup-runs 1 --iterations 5 --pool-sizes 1,2,4 --batch-sizes 32,128
 ```
 
 Use fixed benchmark arguments when comparing revisions so regressions are meaningful.
+
+CI regression guard is enabled for baseline config (`pool_size=1`, `batch_size=32`) and reports:
+- `bad` (fails CI)
+- `stable`
+- `small improvement`
+- `great improvement`
 
 ### Retrieval Quality Eval (long blog)
 
@@ -195,13 +201,14 @@ Tune `penalty` and compare these metrics across revisions.
 `HTMLIntentChunker.get_chunks(...)` and CLI support `pool_size` / `--pool-size`:
 
 ```bash
-python -m domdistill file benchmarks/blog.html --query "concurrency" --top-k-chunks 5 --pool-size 4
+python -m domdistill file benchmarks/blog.html --query "concurrency" --top-k-chunks 5 --pool-size 4 --batch-size 25
 ```
 
 Rules:
 - `pool_size=1` runs serially.
 - `pool_size>1` uses multiprocessing.
 - If `embedding_fn` is provided, `pool_size` must stay `1` (otherwise an error is raised).
+- `batch_size` controls how many chunk scoring items are submitted per process-pool task.
 - Embedding-stage rescoring uses SentenceTransformer `encode_multi_process` (default embedder path).
 - `pool_size` controls non-embedding task parallelism (section-level selection workers).
 

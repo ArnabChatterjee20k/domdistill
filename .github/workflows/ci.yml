@@ -29,4 +29,4 @@ jobs:
 
       - name: Benchmark (prints current results)
         run: |
-          python benchmarks/bench_chunker_pool.py --html-file benchmarks/blog.html --repeat-factor 10 --warmup-runs 1 --iterations 3 --pool-sizes 1,2
+          python benchmarks/bench_chunker_pool.py --html-file benchmarks/blog.html --repeat-factor 10 --warmup-runs 1 --iterations 3 --pool-sizes 1,2 --batch-sizes 32,128 --baseline-pool-size 1 --baseline-batch-size 32 --target-latency-ms 15000 --enforce-regression-check

@@ -32,11 +32,10 @@ class SentenceTransformerEmbedder:
             model.save(str(self.save_dir))
             self._model = model
 
-    def encode(self, text: str) -> np.ndarray:
+    def encode(self, texts: list[str], batch_size: int = 25) -> np.ndarray:
         if self._model is None:
             self._load()
-        return np.asarray(self._model.encode(text), dtype=float)
-
+        return np.asarray(self._model.encode(texts, batch_size=batch_size), dtype=float)
 
 _default_embedder: SentenceTransformerEmbedder | None = None
 
@@ -48,5 +47,5 @@ def get_default_embedder() -> SentenceTransformerEmbedder:
     return _default_embedder
 
 
-def get_embedding(text: str) -> np.ndarray:
-    return get_default_embedder().encode(text)
+def get_embedding(texts: list[str], batch_size: int = 25) -> np.ndarray:
+    return get_default_embedder().encode(texts, batch_size=batch_size)
