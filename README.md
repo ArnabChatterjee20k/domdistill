@@ -196,7 +196,7 @@ This reports:
 
 Tune `penalty` and compare these metrics across revisions.
 
-### Process Pool Control
+### Thread Pool Control
 
 `HTMLIntentChunker.get_chunks(...)` and CLI support `pool_size` / `--pool-size`:
 
@@ -206,13 +206,10 @@ python -m domdistill file benchmarks/blog.html --query "concurrency" --top-k-chu
 
 Rules:
 - `pool_size=1` runs serially.
-- `pool_size>1` uses multiprocessing.
-- If `embedding_fn` is provided, `pool_size` must stay `1` (otherwise an error is raised).
-- `batch_size` controls how many chunk scoring items are submitted per process-pool task.
-- Embedding-stage rescoring uses SentenceTransformer `encode_multi_process` (default embedder path).
-- `pool_size` controls non-embedding task parallelism (section-level selection workers).
+- `pool_size>1` uses thread-based parallelism.
+- Custom `embedding_fn` works with thread pool (no pickling/serialization requirement).
+- `batch_size` controls how many chunk scoring items are submitted per thread task.
 
 Cost tradeoff as `pool_size` increases:
-- Each worker process loads its own embedding model instance (not shared in-memory across processes).
-- Higher `pool_size` increases startup/warmup time and RAM usage.
-- Throughput can improve on larger workloads, but small workloads may become slower due to process/model overhead.
+- Thread scheduling overhead can dominate on small workloads.
+- Throughput can improve on larger workloads, but tuning `pool_size` and `batch_size` is important.

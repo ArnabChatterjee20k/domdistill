@@ -2,35 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .dom_split import SPLITTER_TAGS, split_dom
-from .embeddings import EmbeddingFn, get_default_embedder, get_embedding
+from .embeddings import EmbeddingFn
 from .models import SplittedDomNodes
-from .selection import get_chunks, get_cosine_similarity, get_score_for_chunk
-
-_WORKER_EMBEDDING_FN: EmbeddingFn | None = None
-
-
-def _worker_encode(text: str) -> np.ndarray:
-    embedder = get_default_embedder()
-    return embedder.encode([text])[0]
-
-
-def _init_pool_worker() -> None:
-    global _WORKER_EMBEDDING_FN
-    embedder = get_default_embedder()
-    # Force one-time model load per worker process.
-    embedder.encode(["warmup"])
-    _WORKER_EMBEDDING_FN = _worker_encode
-
-
-def _resolve_embedding_fn(embedding_fn: EmbeddingFn | None) -> EmbeddingFn | None:
-    if embedding_fn is not None:
-        return embedding_fn
-    return _WORKER_EMBEDDING_FN
-
+from .selection import get_chunks, get_score_for_chunk
 
 def _section_worker(
     query: str,
@@ -40,13 +17,12 @@ def _section_worker(
     penalty: float,
     embedding_fn: EmbeddingFn | None,
 ) -> "ChunkSelectionResult":
-    resolved_embedding_fn = _resolve_embedding_fn(embedding_fn)
     score, selected_chunks, discarded_chunks = get_chunks(
         chunks=chunks,
         query=query,
         heading=heading,
         penalty=penalty,
-        embedding_fn=resolved_embedding_fn,
+        embedding_fn=embedding_fn,
     )
     return ChunkSelectionResult(
         score=score,
@@ -63,7 +39,6 @@ def _score_chunk_batch_worker(
     penalty: float,
     embedding_fn: EmbeddingFn | None,
 ) -> list["RankedChunk"]:
-    resolved_embedding_fn = _resolve_embedding_fn(embedding_fn)
     ranked: list[RankedChunk] = []
     for selected_chunk, heading, section_index in chunk_entries:
         ranked.append(
@@ -74,7 +49,7 @@ def _score_chunk_batch_worker(
                     heading=heading,
                     chunk=selected_chunk,
                     penalty=penalty,
-                    embedding_fn=resolved_embedding_fn,
+                    embedding_fn=embedding_fn,
                 ),
                 heading=heading,
                 section_index=section_index,
@@ -194,20 +169,14 @@ class HTMLIntentChunker:
             raise ValueError("pool_size must be >= 1")
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
-        if self.embedding_fn is not None and pool_size > 1:
-            raise ValueError(
-                "pool_size > 1 is not supported when embedding_fn is provided. "
-                "Use pool_size=1 or omit embedding_fn."
-            )
 
         section_results: list[ChunkSelectionResult] = []
         ranked_chunks: list[RankedChunk] = []
-        use_process_pool = pool_size > 1
+        use_thread_pool = pool_size > 1
 
-        if use_process_pool:
-            with ProcessPoolExecutor(
+        if use_thread_pool:
+            with ThreadPoolExecutor(
                 max_workers=pool_size,
-                initializer=_init_pool_worker,
             ) as executor:
                 section_futures = [
                     executor.submit(
@@ -247,7 +216,7 @@ class HTMLIntentChunker:
                     for future in as_completed(batch_futures):
                         ranked_chunks.extend(future.result())
         else:
-            # Custom embedding callables are often not pickleable on Windows spawn.
+            # Serial fallback for small workloads.
             for section_index in range(len(sections)):
                 section_results.append(self._get_section_chunks(query, section_index))
 

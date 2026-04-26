@@ -40,6 +40,16 @@ dp[j] = max over i < j:
 ### Why not any already present solutions?
 I am trying to a build generalized solution for info gather through web scraping. And for this I need some heuristic formulation as well. So this sematic distillation helps
 
+### Why threadpool instead of the processpool?
+Process pool was giving a high overhead even after batching. So pool with size 1 and batching was giving better performance as we needed to load model atleast once in each processes
+Using thread pool is loading the model only once as the memory is shared among threads unlike process and spinning thread is cheap. Giving better benchmarks.
+Even with prewarming the model with initializer inside process pool didn't solve it.
+See the state now https://github.com/ArnabChatterjee20k/domdistill/blob/3ef3328d5ab78c84c7d1fad1e90f30c54a126cdf/domdistill/chunker.py
+
+Though dp is present but still that is more embedding heavy. So defaulting thread pool for now only\
+
+No overhead of GIL lock as libs like sentence transformers are precompiled(built outside of python)
+
 # Todos
 
 ### Change heuristics for this algo?
