@@ -40,8 +40,9 @@ dp[j] = max over i < j:
 ### Why not any already present solutions?
 I am trying to a build generalized solution for info gather through web scraping. And for this I need some heuristic formulation as well. So this sematic distillation helps
 
+# Todos
 
-### What is the issue with this algo?
+### Change heuristics for this algo?
 What if the local maxima is higher than the global maxima?
 Example in the benchmarks blog.html, its all about http servers but I am running this
 ```bash
@@ -61,3 +62,8 @@ Results
 ```
 
 Cause of the local maxima here -> the max is getting is too high
+
+### Adding a separate discard tag type in the get_chunks
+Currently tags like code, table, etc are added in the chunks of a section and not removed if they increase score a bit.
+So we might want to strip them as a part of discarded chunk.
+And also update the get_chunks to use get score on dicarded chunk
