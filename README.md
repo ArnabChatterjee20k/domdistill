@@ -29,8 +29,10 @@ python -m domdistill demo
 Run distillation on a local HTML file:
 
 ```bash
-python -m domdistill file benchmarks/blog.html --query "how http servers work" --section-index 0
+python -m domdistill file benchmarks/blog.html --query "how http servers work" --top-k-chunks 10
 ```
+
+This always runs retrieval across the whole document and returns only top chunks.
 
 ## Library Usage
 
@@ -45,9 +47,22 @@ chunker = HTMLIntentChunker(
 )
 result = chunker.get_chunks("http server basics")
 
-print(result.score)
-print(result.selected_chunks)
-print(result.discarded_chunks)
+print(result.top_sections[0].heading)
+print(result.top_chunks[0].content)
+```
+
+Whole-document retrieval with top-k:
+
+```python
+from domdistill import HTMLIntentChunker
+
+chunker = HTMLIntentChunker(html_content, penalty=0.01)
+multi = chunker.get_chunks(
+    "http server basics",
+    top_k_chunks=10,
+)
+print(multi.top_sections[0].heading)
+print(multi.top_chunks[0].content)
 ```
 
 ## Discrete Building Blocks (and Glueing)
@@ -158,3 +173,18 @@ python benchmarks/bench_select.py --size 12 --iterations 50
 ```
 
 Use fixed benchmark arguments when comparing revisions so regressions are meaningful.
+
+### Retrieval Quality Eval (long blog)
+
+Evaluate whether correct chunks are retrieved for labeled queries on a long blog fixture:
+
+```bash
+python benchmarks/eval_retrieval.py --html-file benchmarks/blog.html --cases-file benchmarks/eval_cases.json --penalty 0.01
+```
+
+This reports:
+- `macro_precision`: fraction of returned chunks that match expected phrases.
+- `macro_recall`: fraction of expected phrases successfully retrieved.
+- `macro_wrong_merge_rate`: selected chunks that mix expected and forbidden-topic cues.
+
+Tune `penalty` and compare these metrics across revisions.

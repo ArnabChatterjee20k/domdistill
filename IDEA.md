@@ -37,5 +37,27 @@ dp[i] = best score till node i
 dp[j] = max over i < j:
     dp[i] + score(nodes[i+1 → j]) - β
 
-Why not any already present solutions?
+### Why not any already present solutions?
 I am trying to a build generalized solution for info gather through web scraping. And for this I need some heuristic formulation as well. So this sematic distillation helps
+
+
+### What is the issue with this algo?
+What if the local maxima is higher than the global maxima?
+Example in the benchmarks blog.html, its all about http servers but I am running this
+```bash
+python -m domdistill file benchmarks/blog.html --query "thread" --top-k-chunks  1
+```
+Results
+```
+  "query": "thread",
+  "top_chunks": [
+    {
+      "content": "An HTTP server is a system that listens for incoming HTTP requests from clients (usually browsers) and returns responses. These responses can be HTML pages, JSON data, images, or other resources.",
+      "score": 0.8891703701946699,
+      "heading": "What is an HTTP Server?",
+      "section_index": 2
+    }
+  ]
+```
+
+Cause of the local maxima here -> the max is getting is too high

@@ -1,0 +1,44 @@
+{
+  "description": "Evaluation cases for long-blog retrieval quality.",
+  "cases": [
+    {
+      "id": "http_basics",
+      "query": "what is an http server and request response flow",
+      "expected_substrings": [
+        "listens for incoming HTTP requests",
+        "returns responses",
+        "Client sends a request"
+      ],
+      "forbidden_substrings": [
+        "Thread-Based",
+        "Use HTTPS instead of HTTP"
+      ]
+    },
+    {
+      "id": "concurrency_models",
+      "query": "thread based event driven hybrid concurrency",
+      "expected_substrings": [
+        "Thread-Based",
+        "Event-Driven",
+        "Hybrid Models"
+      ],
+      "forbidden_substrings": [
+        "returns responses",
+        "Use HTTPS instead of HTTP"
+      ]
+    },
+    {
+      "id": "security_practices",
+      "query": "security best practices https input validation authentication",
+      "expected_substrings": [
+        "Use HTTPS instead of HTTP",
+        "Validate inputs",
+        "authentication mechanisms"
+      ],
+      "forbidden_substrings": [
+        "Thread-Based",
+        "returns responses"
+      ]
+    }
+  ]
+}

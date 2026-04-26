@@ -33,14 +33,28 @@ def run_demo() -> dict:
     }
 
 
-def run_file(path: Path, query: str, section_index: int = 0, penalty: float = 0.0001) -> dict:
+def run_file(
+    path: Path,
+    query: str,
+    penalty: float = 0.0001,
+    top_k_chunks: int = 10,
+) -> dict:
     chunker = HTMLIntentChunker.from_file(path, penalty=penalty)
-    result = chunker.get_chunks(query=query, section_index=section_index)
+    result = chunker.get_chunks(
+        query=query,
+        top_k_chunks=top_k_chunks,
+    )
     return {
-        "heading": result.heading,
-        "score": result.score,
-        "selected_chunks": result.selected_chunks,
-        "discarded_chunks": result.discarded_chunks,
+        "query": result.query,
+        "top_chunks": [
+            {
+                "content": item.content,
+                "score": item.score,
+                "heading": item.heading,
+                "section_index": item.section_index,
+            }
+            for item in result.top_chunks
+        ],
     }
 
 
@@ -54,14 +68,14 @@ def build_parser() -> argparse.ArgumentParser:
     file_parser = subparsers.add_parser("file", help="Run distillation for one HTML file section")
     file_parser.add_argument("path", type=Path)
     file_parser.add_argument("--query", required=True)
-    file_parser.add_argument("--section-index", type=int, default=0)
     file_parser.add_argument("--penalty", type=float, default=0.0001)
+    file_parser.add_argument("--top-k-chunks", type=int, default=10)
     file_parser.set_defaults(
         handler=lambda args: run_file(
             path=args.path,
             query=args.query,
-            section_index=args.section_index,
             penalty=args.penalty,
+            top_k_chunks=args.top_k_chunks,
         )
     )
 
