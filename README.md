@@ -29,7 +29,7 @@ python -m domdistill demo
 Run distillation on a local HTML file:
 
 ```bash
-python -m domdistill file benchmarks/blog.html --query "how http servers work" --top-k-chunks 10
+python -m domdistill file benchmarks/blog.html --query "how http servers work" --top-k-chunks 10 --max-adjacent-chunks 6 --max-chunks-per-section 120
 ```
 
 This always runs retrieval across the whole document and returns only top chunks.
@@ -60,10 +60,19 @@ chunker = HTMLIntentChunker(html_content, penalty=0.01)
 multi = chunker.get_chunks(
     "http server basics",
     top_k_chunks=10,
+    max_adjacent_chunks=6,
+    max_chunks_per_section=120,
 )
 print(multi.top_sections[0].heading)
 print(multi.top_chunks[0].content)
 ```
+
+Performance knobs:
+- `max_adjacent_chunks`: limits how many neighboring chunks can be merged into one candidate.
+  Lower values reduce runtime/memory (`1` means no merge across chunk boundaries).
+- `max_chunks_per_section`: caps how many chunks are considered inside each section.
+  Useful for very large/noisy pages.
+- `max_merge_span`: legacy alias for `max_adjacent_chunks` (still accepted for backward compatibility).
 
 ## Discrete Building Blocks (and Glueing)
 
@@ -217,6 +226,8 @@ Rules:
   enabled with `use_pool=True` / `--use-pool` and the section threshold is exceeded.
 - With a custom `embedding_fn`, `pool_size>1` uses thread-based section parallelism.
 - Custom `embedding_fn` works with thread pool; there is no pickling/serialization requirement.
+- `--max-adjacent-chunks` is the primary merge-window option; `--max-merge-span` is a legacy alias.
+- `--max-chunks-per-section` prevents candidate explosion on large sections.
 
 Optional process-pool DP:
 
