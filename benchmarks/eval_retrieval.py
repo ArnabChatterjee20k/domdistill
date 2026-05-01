@@ -38,7 +38,9 @@ def evaluate_case(chunker: HTMLIntentChunker, case: dict) -> dict:
             selected_hits += 1
 
     precision = (
-        selected_hits / len(best_section.selected_chunks) if best_section.selected_chunks else 0.0
+        selected_hits / len(best_section.selected_chunks)
+        if best_section.selected_chunks
+        else 0.0
     )
     recall = expected_hits / len(expected) if expected else 0.0
 
@@ -51,7 +53,9 @@ def evaluate_case(chunker: HTMLIntentChunker, case: dict) -> dict:
             wrong_merge_count += 1
 
     wrong_merge_rate = (
-        wrong_merge_count / len(best_section.selected_chunks) if best_section.selected_chunks else 0.0
+        wrong_merge_count / len(best_section.selected_chunks)
+        if best_section.selected_chunks
+        else 0.0
     )
 
     return {
@@ -86,17 +90,25 @@ def run_eval(html_file: Path, cases_file: Path, penalty: float) -> dict:
         "cases_file": str(cases_file),
         "penalty": penalty,
         "cases_evaluated": len(case_results),
-        "macro_precision": statistics.fmean(precision_values) if precision_values else 0.0,
+        "macro_precision": statistics.fmean(precision_values)
+        if precision_values
+        else 0.0,
         "macro_recall": statistics.fmean(recall_values) if recall_values else 0.0,
-        "macro_wrong_merge_rate": statistics.fmean(wrong_merge_values) if wrong_merge_values else 0.0,
+        "macro_wrong_merge_rate": statistics.fmean(wrong_merge_values)
+        if wrong_merge_values
+        else 0.0,
         "case_results": case_results,
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate long-blog retrieval quality.")
+    parser = argparse.ArgumentParser(
+        description="Evaluate long-blog retrieval quality."
+    )
     parser.add_argument("--html-file", type=Path, default=Path("benchmarks/blog.html"))
-    parser.add_argument("--cases-file", type=Path, default=Path("benchmarks/eval_cases.json"))
+    parser.add_argument(
+        "--cases-file", type=Path, default=Path("benchmarks/eval_cases.json")
+    )
     parser.add_argument("--penalty", type=float, default=0.01)
     args = parser.parse_args()
     result = run_eval(args.html_file, args.cases_file, args.penalty)

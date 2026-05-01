@@ -9,6 +9,22 @@ from lxml import html
 from .models import Node, SplittedDomNodes
 
 SPLITTER_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+TEXT_BLOCK_TAGS = (
+    "p",
+    "li",
+    "td",
+    "th",
+    "pre",
+    "code",
+    "blockquote",
+    "figcaption",
+    "caption",
+    "summary",
+    "label",
+    "dt",
+    "dd",
+)
+IGNORED_TAGS = ("script", "style", "img")
 
 
 def _cache_key(html_content: str, splitter_tags: tuple[str, ...]) -> str:
@@ -26,22 +42,38 @@ def split_dom(
     if cache_dir is not None:
         cache_path = Path(cache_dir)
         cache_path.mkdir(parents=True, exist_ok=True)
-        cached_file = cache_path / f"split_dom_{_cache_key(html_content, splitter_tags)}.pkl"
+        cached_file = (
+            cache_path / f"split_dom_{_cache_key(html_content, splitter_tags)}.pkl"
+        )
         if cached_file.exists():
             with cached_file.open("rb") as handle:
                 return pickle.load(handle)
 
     tree = html.fromstring(html_content)
+    for tag_name in IGNORED_TAGS:
+        for ignored in tree.xpath(f"//{tag_name}"):
+            ignored.drop_tree()
     dom_nodes: list[Node] = []
 
     for element in tree.iter():
         tag = getattr(element, "tag", "")
         if not isinstance(tag, str):
             continue
-        text = " ".join(part.strip() for part in element.xpath("./text()") if part and part.strip())
+
+        normalized_tag = tag.lower()
+        should_extract = (
+            normalized_tag in splitter_tags or normalized_tag in TEXT_BLOCK_TAGS
+        )
+        if not should_extract:
+            continue
+
+        # Pull nested inline text into the nearest meaningful text block.
+        text = " ".join(
+            part.strip() for part in element.itertext() if part and part.strip()
+        )
         if not text:
             continue
-        dom_nodes.append(Node(tag=tag.lower(), content=text))
+        dom_nodes.append(Node(tag=normalized_tag, content=text))
 
     sections: list[SplittedDomNodes] = []
     current_heading = Node(tag="root", content="root")
@@ -50,7 +82,9 @@ def split_dom(
     for node in dom_nodes:
         if node.tag in splitter_tags:
             if current_nodes:
-                sections.append(SplittedDomNodes(heading=current_heading, nodes=current_nodes))
+                sections.append(
+                    SplittedDomNodes(heading=current_heading, nodes=current_nodes)
+                )
             current_heading = node
             current_nodes = []
         else:

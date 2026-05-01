@@ -70,6 +70,7 @@ class SectionPrecomputedWork:
     merged_by_span: dict[tuple[int, int], str]
     score_by_chunk: dict[str, float]
     penalty: float
+    max_merge_span: int | None
 
 
 def get_cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -115,16 +116,27 @@ def get_score_from_embeddings(
     return max(query_similarity_score, heading_similarity_score) - length_penalty
 
 
-def build_chunk_candidates(chunks: list[str] | None = None) -> ChunkCandidates:
+def build_chunk_candidates(
+    chunks: list[str] | None = None,
+    *,
+    max_merge_span: int | None = None,
+) -> ChunkCandidates:
     if chunks is None:
         chunks = []
+    if max_merge_span is not None and max_merge_span < 1:
+        raise ValueError("max_merge_span must be >= 1")
 
     merged_by_span: dict[tuple[int, int], str] = {}
     candidates: list[str] = []
     seen_candidates: set[str] = set()
     for i in range(len(chunks)):
         merged_parts: list[str] = []
-        for j in range(i, len(chunks)):
+        max_j = (
+            len(chunks)
+            if max_merge_span is None
+            else min(len(chunks), i + max_merge_span)
+        )
+        for j in range(i, max_j):
             merged_parts.append(chunks[j])
             merged_chunk = " ".join(merged_parts)
             merged_by_span[(i, j)] = merged_chunk
@@ -147,7 +159,9 @@ def _score_candidates(
         return {}
 
     if embedding_fn is None:
-        vectors = get_embedding([query, heading, *candidate_chunks], batch_size=batch_size)
+        vectors = get_embedding(
+            [query, heading, *candidate_chunks], batch_size=batch_size
+        )
         query_embedding = vectors[0]
         heading_embedding = vectors[1]
         chunk_embeddings = vectors[2:]
@@ -162,9 +176,13 @@ def _score_candidates(
     scores: dict[str, float] = {}
     for candidate_chunk, chunk_embedding in zip(candidate_chunks, chunk_embeddings):
         query_similarity_score = get_cosine_similarity(query_embedding, chunk_embedding)
-        heading_similarity_score = get_cosine_similarity(heading_embedding, chunk_embedding)
+        heading_similarity_score = get_cosine_similarity(
+            heading_embedding, chunk_embedding
+        )
         length_penalty = penalty * np.sqrt(max(len(candidate_chunk), 1))
-        scores[candidate_chunk] = max(query_similarity_score, heading_similarity_score) - length_penalty
+        scores[candidate_chunk] = (
+            max(query_similarity_score, heading_similarity_score) - length_penalty
+        )
     return scores
 
 
@@ -175,11 +193,12 @@ def select_chunks(
     penalty: float = 0.0001,
     embedding_fn: EmbeddingFn | None = None,
     batch_size: int = 25,
+    max_merge_span: int | None = None,
 ) -> ChunkSelection:
     if chunks is None:
         chunks = []
 
-    candidates = build_chunk_candidates(chunks)
+    candidates = build_chunk_candidates(chunks, max_merge_span=max_merge_span)
 
     score_by_chunk = _score_candidates(
         candidate_chunks=candidates.candidates,
@@ -203,7 +222,11 @@ def select_chunks_with_scores(
     merged_by_span: dict[tuple[int, int], str],
     score_by_chunk: dict[str, float],
     penalty: float,
+    max_merge_span: int | None = None,
 ) -> ChunkSelection:
+    if max_merge_span is not None and max_merge_span < 1:
+        raise ValueError("max_merge_span must be >= 1")
+
     memo: dict[int, tuple[float, list[str], list[str]]] = {}
 
     def helper(i: int) -> tuple[float, list[str], list[str]]:
@@ -218,16 +241,29 @@ def select_chunks_with_scores(
         rest_score, rest_segment, rest_discarded = helper(i + 1)
         total_score_if_discard = rest_score - penalty
         if total_score_if_discard > current_best[0]:
-            current_best = (total_score_if_discard, rest_segment, [chunks[i], *rest_discarded])
+            current_best = (
+                total_score_if_discard,
+                rest_segment,
+                [chunks[i], *rest_discarded],
+            )
 
         # take the current node
-        for j in range(i, len(chunks)):
+        max_j = (
+            len(chunks)
+            if max_merge_span is None
+            else min(len(chunks), i + max_merge_span)
+        )
+        for j in range(i, max_j):
             merged_chunk = merged_by_span[(i, j)]
             current_chunk_score = score_by_chunk[merged_chunk]
             rest_score, rest_segment, rest_discarded = helper(j + 1)
             total_score = current_chunk_score + rest_score - penalty
             if total_score > current_best[0]:
-                current_best = (total_score, [merged_chunk, *rest_segment], rest_discarded)
+                current_best = (
+                    total_score,
+                    [merged_chunk, *rest_segment],
+                    rest_discarded,
+                )
 
         memo[i] = current_best
         return current_best
@@ -251,6 +287,8 @@ def select_sections_document_batch(
     pool_size: int = 1,
     use_pool: bool = False,
     concurrency_section_threshold: int = 0,
+    max_merge_span: int | None = None,
+    max_chunks_per_section: int | None = None,
 ) -> MultiSectionSelectionResult:
     if top_k_chunks < 1:
         raise ValueError("top_k_chunks must be >= 1")
@@ -260,18 +298,30 @@ def select_sections_document_batch(
         raise ValueError("batch_size must be >= 1")
     if concurrency_section_threshold < 0:
         raise ValueError("concurrency_section_threshold must be >= 0")
+    if max_merge_span is not None and max_merge_span < 1:
+        raise ValueError("max_merge_span must be >= 1")
+    if max_chunks_per_section is not None and max_chunks_per_section < 1:
+        raise ValueError("max_chunks_per_section must be >= 1")
 
     prepared_sections: list[SectionPreparedWork] = []
     all_texts: list[str] = [query]
     seen_texts: set[str] = {query}
 
     for section in sections:
-        candidates = build_chunk_candidates(section.chunks)
+        section_chunks = section.chunks
+        if (
+            max_chunks_per_section is not None
+            and len(section_chunks) > max_chunks_per_section
+        ):
+            section_chunks = section_chunks[:max_chunks_per_section]
+        candidates = build_chunk_candidates(
+            section_chunks, max_merge_span=max_merge_span
+        )
         prepared_sections.append(
             SectionPreparedWork(
                 section_index=section.section_index,
                 heading=section.heading,
-                chunks=section.chunks,
+                chunks=section_chunks,
                 merged_by_span=candidates.merged_by_span,
                 candidates=candidates.candidates,
             )
@@ -306,6 +356,7 @@ def select_sections_document_batch(
                 merged_by_span=prepared.merged_by_span,
                 score_by_chunk=score_by_chunk,
                 penalty=penalty,
+                max_merge_span=max_merge_span,
             )
         )
 
@@ -317,9 +368,13 @@ def select_sections_document_batch(
     )
     if use_dp_process_pool:
         with ProcessPoolExecutor(max_workers=pool_size) as executor:
-            section_work_results = list(executor.map(select_precomputed_section, precomputed_work))
+            section_work_results = list(
+                executor.map(select_precomputed_section, precomputed_work)
+            )
     else:
-        section_work_results = [select_precomputed_section(work) for work in precomputed_work]
+        section_work_results = [
+            select_precomputed_section(work) for work in precomputed_work
+        ]
 
     section_results: list[SectionSelectionResult] = []
     ranked_chunks: list[RankedChunkResult] = []
@@ -346,6 +401,7 @@ def select_precomputed_section(
         merged_by_span=work.merged_by_span,
         score_by_chunk=work.score_by_chunk,
         penalty=work.penalty,
+        max_merge_span=work.max_merge_span,
     )
     section_result = SectionSelectionResult(
         score=selection.score,
@@ -364,4 +420,3 @@ def select_precomputed_section(
         for selected_chunk in selection.selected_chunks
     ]
     return section_result, ranked_chunks
-

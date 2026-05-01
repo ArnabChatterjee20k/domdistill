@@ -198,8 +198,12 @@ def main() -> None:
         help="Use process-pool DP only when section count is greater than this value. 0 disables it.",
     )
     args = parser.parse_args()
-    pool_sizes = [int(item.strip()) for item in args.pool_sizes.split(",") if item.strip()]
-    batch_sizes = [int(item.strip()) for item in args.batch_sizes.split(",") if item.strip()]
+    pool_sizes = [
+        int(item.strip()) for item in args.pool_sizes.split(",") if item.strip()
+    ]
+    batch_sizes = [
+        int(item.strip()) for item in args.batch_sizes.split(",") if item.strip()
+    ]
     result = benchmark(
         html_file=args.html_file,
         repeat_factor=args.repeat_factor,
@@ -227,7 +231,9 @@ def main() -> None:
         if baseline_match is None:
             raise ValueError("Baseline config not found in benchmark results.")
 
-        status = classify_status(baseline_match["latency_ms_avg"], args.target_latency_ms)
+        status = classify_status(
+            baseline_match["latency_ms_avg"], args.target_latency_ms
+        )
         result["regression_check"] = {
             "baseline_pool_size": args.baseline_pool_size,
             "baseline_batch_size": args.baseline_batch_size,

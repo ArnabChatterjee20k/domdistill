@@ -41,6 +41,7 @@ class SentenceTransformerEmbedder:
                     self._load()
         return np.asarray(self._model.encode(texts, batch_size=batch_size), dtype=float)
 
+
 _default_embedder: SentenceTransformerEmbedder | None = None
 
 

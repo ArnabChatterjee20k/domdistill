@@ -23,14 +23,23 @@ def _section_worker(
     penalty: float,
     embedding_fn: EmbeddingFn | None,
     batch_size: int,
+    max_merge_span: int | None,
+    max_chunks_per_section: int | None,
 ) -> tuple["ChunkSelectionResult", list["RankedChunk"]]:
+    section_chunks = chunks
+    if (
+        max_chunks_per_section is not None
+        and len(section_chunks) > max_chunks_per_section
+    ):
+        section_chunks = section_chunks[:max_chunks_per_section]
     selection = select_chunks(
-        chunks=chunks,
+        chunks=section_chunks,
         query=query,
         heading=heading,
         penalty=penalty,
         embedding_fn=embedding_fn,
         batch_size=batch_size,
+        max_merge_span=max_merge_span,
     )
     section_result = ChunkSelectionResult(
         score=selection.score,
@@ -121,12 +130,14 @@ class HTMLIntentChunker:
             )
         return self._sections
 
-    def _get_section_chunks(self, query: str, section_index: int) -> ChunkSelectionResult:
+    def _get_section_chunks(
+        self, query: str, section_index: int
+    ) -> ChunkSelectionResult:
         sections = self.sections()
         if not sections:
             raise ValueError("No sections found in document.")
         if section_index < 0 or section_index >= len(sections):
-            raise ValueError(f"section_index out of bounds (0..{len(sections)-1})")
+            raise ValueError(f"section_index out of bounds (0..{len(sections) - 1})")
 
         section = sections[section_index]
         chunks = [node.content for node in section.nodes if node.content.strip()]
@@ -136,6 +147,7 @@ class HTMLIntentChunker:
             heading=section.heading.content,
             penalty=self.penalty,
             embedding_fn=self.embedding_fn,
+            max_merge_span=6,
         )
         return ChunkSelectionResult(
             score=selection.score,
@@ -154,6 +166,9 @@ class HTMLIntentChunker:
         batch_size: int = 25,
         use_pool: bool = False,
         concurrency_section_threshold: int = 0,
+        max_adjacent_chunks: int | None = 10,
+        max_merge_span: int | None = None,
+        max_chunks_per_section: int | None = 120,
     ) -> MultiSectionChunkResult:
         sections = self.sections()
         if not sections:
@@ -166,6 +181,13 @@ class HTMLIntentChunker:
             raise ValueError("batch_size must be >= 1")
         if concurrency_section_threshold < 0:
             raise ValueError("concurrency_section_threshold must be >= 0")
+        merge_window = max_adjacent_chunks if max_merge_span is None else max_merge_span
+        if max_adjacent_chunks is not None and max_adjacent_chunks < 1:
+            raise ValueError("max_adjacent_chunks must be >= 1")
+        if max_merge_span is not None and max_merge_span < 1:
+            raise ValueError("max_merge_span must be >= 1")
+        if max_chunks_per_section is not None and max_chunks_per_section < 1:
+            raise ValueError("max_chunks_per_section must be >= 1")
 
         section_results: list[ChunkSelectionResult] = []
         ranked_chunks: list[RankedChunk] = []
@@ -177,7 +199,9 @@ class HTMLIntentChunker:
                 SectionInput(
                     section_index=section_index,
                     heading=section.heading.content,
-                    chunks=[node.content for node in section.nodes if node.content.strip()],
+                    chunks=[
+                        node.content for node in section.nodes if node.content.strip()
+                    ],
                 )
                 for section_index, section in enumerate(sections)
             ]
@@ -190,6 +214,8 @@ class HTMLIntentChunker:
                 pool_size=pool_size,
                 use_pool=use_pool,
                 concurrency_section_threshold=concurrency_section_threshold,
+                max_merge_span=merge_window,
+                max_chunks_per_section=max_chunks_per_section,
             )
             return MultiSectionChunkResult(
                 query=selection_result.query,
@@ -224,10 +250,16 @@ class HTMLIntentChunker:
                         query,
                         section_index,
                         sections[section_index].heading.content,
-                        [node.content for node in sections[section_index].nodes if node.content.strip()],
+                        [
+                            node.content
+                            for node in sections[section_index].nodes
+                            if node.content.strip()
+                        ],
                         self.penalty,
                         self.embedding_fn,
                         batch_size,
+                        merge_window,
+                        max_chunks_per_section,
                     )
                     for section_index in range(len(sections))
                 ]
@@ -242,19 +274,29 @@ class HTMLIntentChunker:
                     query,
                     section_index,
                     sections[section_index].heading.content,
-                    [node.content for node in sections[section_index].nodes if node.content.strip()],
+                    [
+                        node.content
+                        for node in sections[section_index].nodes
+                        if node.content.strip()
+                    ],
                     self.penalty,
                     self.embedding_fn,
                     batch_size,
+                    merge_window,
+                    max_chunks_per_section,
                 )
                 section_results.append(section_result)
                 ranked_chunks.extend(section_ranked_chunks)
 
-        ranked_sections = sorted(section_results, key=lambda item: item.score, reverse=True)
+        ranked_sections = sorted(
+            section_results, key=lambda item: item.score, reverse=True
+        )
         top_chunks = sorted(ranked_chunks, key=lambda item: item.score, reverse=True)[
             : min(top_k_chunks, len(ranked_chunks))
         ]
-        return MultiSectionChunkResult(query=query, top_sections=ranked_sections, top_chunks=top_chunks)
+        return MultiSectionChunkResult(
+            query=query, top_sections=ranked_sections, top_chunks=top_chunks
+        )
 
     async def get_chunks_async(
         self,
@@ -265,6 +307,9 @@ class HTMLIntentChunker:
         batch_size: int = 25,
         use_pool: bool = False,
         concurrency_section_threshold: int = 0,
+        max_adjacent_chunks: int | None = 6,
+        max_merge_span: int | None = None,
+        max_chunks_per_section: int | None = 120,
     ) -> MultiSectionChunkResult:
         return await asyncio.to_thread(
             self.get_chunks,
@@ -274,4 +319,7 @@ class HTMLIntentChunker:
             batch_size=batch_size,
             use_pool=use_pool,
             concurrency_section_threshold=concurrency_section_threshold,
+            max_adjacent_chunks=max_adjacent_chunks,
+            max_merge_span=max_merge_span,
+            max_chunks_per_section=max_chunks_per_section,
         )
