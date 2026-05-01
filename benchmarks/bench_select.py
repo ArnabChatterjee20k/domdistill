@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-from domdistill.selection import get_chunks
+from domdistill.selection import select_chunks
 
 
 def fake_embedder(text: str) -> np.ndarray:
@@ -38,7 +38,7 @@ def run(size: int, iterations: int) -> dict[str, float]:
     samples = []
     for _ in range(iterations):
         start = time.perf_counter()
-        get_chunks(
+        select_chunks(
             chunks=chunks,
             query="improve http performance and security",
             heading="web backend",

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from .chunker import HTMLIntentChunker
-from .selection import get_chunks
+from .selection import select_chunks
 
 
 def run_demo() -> dict:
@@ -16,19 +16,20 @@ def run_demo() -> dict:
         "databases are a key part of the world",
         "i am arnab",
     ]
-    sim_score, sim_selected, sim_discarded = get_chunks(
+    selection = select_chunks(
         chunks=synthetic_chunks,
         query="how http servers work",
         heading="Key Takeaways",
         penalty=0.05,
     )
     return {
-        "score": sim_score,
-        "selected_count": len(sim_selected),
-        "discarded_count": len(sim_discarded),
-        "selected_chunks": sim_selected,
+        "score": selection.score,
+        "selected_count": len(selection.selected_chunks),
+        "discarded_count": len(selection.discarded_chunks),
+        "selected_chunks": selection.selected_chunks,
         "discarded_preview": [
-            chunk[:120] + "..." if len(chunk) > 120 else chunk for chunk in sim_discarded
+            chunk[:120] + "..." if len(chunk) > 120 else chunk
+            for chunk in selection.discarded_chunks
         ],
     }
 
@@ -40,6 +41,8 @@ def run_file(
     top_k_chunks: int = 10,
     pool_size: int = 1,
     batch_size: int = 25,
+    use_pool: bool = False,
+    concurrency_section_threshold: int = 0,
 ) -> dict:
     chunker = HTMLIntentChunker.from_file(path, penalty=penalty)
     result = chunker.get_chunks(
@@ -47,6 +50,8 @@ def run_file(
         top_k_chunks=top_k_chunks,
         pool_size=pool_size,
         batch_size=batch_size,
+        use_pool=use_pool,
+        concurrency_section_threshold=concurrency_section_threshold,
     )
     return {
         "query": result.query,
@@ -76,6 +81,17 @@ def build_parser() -> argparse.ArgumentParser:
     file_parser.add_argument("--top-k-chunks", type=int, default=10)
     file_parser.add_argument("--pool-size", type=int, default=1)
     file_parser.add_argument("--batch-size", type=int, default=25)
+    file_parser.add_argument(
+        "--use-pool",
+        action="store_true",
+        help="Use process-pool DP after document-level embedding when threshold is exceeded.",
+    )
+    file_parser.add_argument(
+        "--concurrency-section-threshold",
+        type=int,
+        default=0,
+        help="Use process-pool DP only when section count is greater than this value. 0 disables it.",
+    )
     file_parser.set_defaults(
         handler=lambda args: run_file(
             path=args.path,
@@ -84,6 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
             top_k_chunks=args.top_k_chunks,
             pool_size=args.pool_size,
             batch_size=args.batch_size,
+            use_pool=args.use_pool,
+            concurrency_section_threshold=args.concurrency_section_threshold,
         )
     )
 

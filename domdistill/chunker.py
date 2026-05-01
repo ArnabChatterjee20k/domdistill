@@ -8,7 +8,11 @@ from pathlib import Path
 from .dom_split import SPLITTER_TAGS, split_dom
 from .embeddings import EmbeddingFn
 from .models import SplittedDomNodes
-from .selection import get_chunks, select_chunks
+from .selection import (
+    select_sections_document_batch,
+    select_chunks,
+    SectionInput,
+)
 
 
 def _section_worker(
@@ -126,7 +130,7 @@ class HTMLIntentChunker:
 
         section = sections[section_index]
         chunks = [node.content for node in section.nodes if node.content.strip()]
-        score, selected_chunks, discarded_chunks = get_chunks(
+        selection = select_chunks(
             chunks=chunks,
             query=query,
             heading=section.heading.content,
@@ -134,9 +138,9 @@ class HTMLIntentChunker:
             embedding_fn=self.embedding_fn,
         )
         return ChunkSelectionResult(
-            score=score,
-            selected_chunks=selected_chunks,
-            discarded_chunks=discarded_chunks,
+            score=selection.score,
+            selected_chunks=selection.selected_chunks,
+            discarded_chunks=selection.discarded_chunks,
             heading=section.heading.content,
             section_index=section_index,
         )
@@ -148,6 +152,8 @@ class HTMLIntentChunker:
         top_k_chunks: int = 10,
         pool_size: int = 1,
         batch_size: int = 25,
+        use_pool: bool = False,
+        concurrency_section_threshold: int = 0,
     ) -> MultiSectionChunkResult:
         sections = self.sections()
         if not sections:
@@ -158,10 +164,55 @@ class HTMLIntentChunker:
             raise ValueError("pool_size must be >= 1")
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
+        if concurrency_section_threshold < 0:
+            raise ValueError("concurrency_section_threshold must be >= 0")
 
         section_results: list[ChunkSelectionResult] = []
         ranked_chunks: list[RankedChunk] = []
         use_thread_pool = pool_size > 1
+
+        # fastest route for the small documents(single thread + batch)
+        if self.embedding_fn is None:
+            section_inputs = [
+                SectionInput(
+                    section_index=section_index,
+                    heading=section.heading.content,
+                    chunks=[node.content for node in section.nodes if node.content.strip()],
+                )
+                for section_index, section in enumerate(sections)
+            ]
+            selection_result = select_sections_document_batch(
+                query=query,
+                sections=section_inputs,
+                penalty=self.penalty,
+                top_k_chunks=top_k_chunks,
+                batch_size=batch_size,
+                pool_size=pool_size,
+                use_pool=use_pool,
+                concurrency_section_threshold=concurrency_section_threshold,
+            )
+            return MultiSectionChunkResult(
+                query=selection_result.query,
+                top_sections=[
+                    ChunkSelectionResult(
+                        score=section.score,
+                        selected_chunks=section.selected_chunks,
+                        discarded_chunks=section.discarded_chunks,
+                        heading=section.heading,
+                        section_index=section.section_index,
+                    )
+                    for section in selection_result.top_sections
+                ],
+                top_chunks=[
+                    RankedChunk(
+                        content=chunk.content,
+                        score=chunk.score,
+                        heading=chunk.heading,
+                        section_index=chunk.section_index,
+                    )
+                    for chunk in selection_result.top_chunks
+                ],
+            )
 
         if use_thread_pool:
             with ThreadPoolExecutor(
@@ -212,6 +263,8 @@ class HTMLIntentChunker:
         top_k_chunks: int = 10,
         pool_size: int = 1,
         batch_size: int = 25,
+        use_pool: bool = False,
+        concurrency_section_threshold: int = 0,
     ) -> MultiSectionChunkResult:
         return await asyncio.to_thread(
             self.get_chunks,
@@ -219,6 +272,6 @@ class HTMLIntentChunker:
             top_k_chunks=top_k_chunks,
             pool_size=pool_size,
             batch_size=batch_size,
+            use_pool=use_pool,
+            concurrency_section_threshold=concurrency_section_threshold,
         )
-
-

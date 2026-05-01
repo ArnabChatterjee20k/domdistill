@@ -99,6 +99,75 @@ dp[i] = max(
 The chunker also no longer runs a second scoring pass over `selected_chunks`. `select_chunks`
 returns `selected_scores`, and ranking reuses those scores directly.
 
+### Further optimization: document-level embedding batch
+
+After the first optimization, the default embedder still did one `encode()` call per section.
+That was much better than embedding inside the DP loop, but large pages can have hundreds of
+small sections, so the model was still being called hundreds of times.
+
+The current default path now prepares the whole document first:
+
+```
+for every section:
+  build section candidates
+  collect heading
+  collect candidates
+
+unique_texts = [query, *all_headings, *all_candidates]
+embeddings = embed(unique_texts)  # one document-level batch
+
+for every section:
+  compute score(candidate) from cached embeddings
+  run DP using precomputed scores
+```
+
+This keeps the same DP and scoring semantics, but changes the embedding shape again:
+
+```
+old initial path:
+  many embedding calls inside every DP candidate
+
+first optimization:
+  one embedding batch per section
+
+current optimization:
+  one embedding batch per document
+```
+
+For the default SentenceTransformer embedder, `pool_size` now matters much less because the
+main model work happens in one large batch. The model/PyTorch runtime can use CPU threads
+internally. Python-level section fanout is still available for custom embedders, but it is no
+longer the fastest path for the default model.
+
+### Optional process-pool DP after scoring
+
+> Idea is since the underlying pytorch already using the cpu cores by the batch so we can compute the scores in the batch format directly in a single thread and no thread overhead. DP overhead is very low as we have the precomputed values already
+
+There is now an optional pool path for only the DP phase:
+
+```
+batch embeddings for the document
+compute score_by_chunk per section
+
+if use_pool and section_count > concurrency_section_threshold:
+  send precomputed section scores to process pool
+  run DP per section in worker processes
+else:
+  run DP serially in the parent process
+```
+
+Important: model scoring is still always batched before this step. Worker processes do not
+load SentenceTransformer and do not recompute embeddings. They only receive `chunks`,
+`merged_by_span`, and `score_by_chunk`.
+
+`concurrency_section_threshold = 0` disables this path and keeps the current serial DP after
+document-level batching. A threshold like `301` means process-pool DP is used only when the
+document has more than 301 sections.
+
+On the current benchmark fixture this is slower because each section is small, so process
+serialization overhead is larger than the DP work. This path is mainly for pages with many
+sections where each section also has enough candidates to make DP evaluation meaningful.
+
 Measured impact on the benchmark page:
 
 ```
@@ -113,6 +182,9 @@ after:
   pool_size=1 -> 5.81s
   pool_size=2 -> 1.21s
   pool_size=4 -> 0.95s
+
+after document-level batch, warmed:
+  best -> 0.58s
 ```
 
 For a larger page:
@@ -124,11 +196,15 @@ pool_size=1 -> 18.11s
 pool_size=2 -> 8.77s
 pool_size=4 -> 6.46s
 pool_size=8 -> 7.12s
+
+after document-level batch, warmed:
+  best -> 0.52s
 ```
 
-`pool_size=4` was best in this run. `pool_size=8` was slower, likely because the shared CPU
-model work starts hitting scheduling and compute contention. So "use all cores" should still
-be tuned by benchmark, not assumed to mean maximum worker count.
+In the per-section batching version, `pool_size=4` was best and `pool_size=8` was slower,
+likely because the shared CPU model work started hitting scheduling and compute contention.
+With document-level batching, pool-size differences are mostly noise for the default embedder,
+because the hot path is no longer a section worker loop.
 
 Time complexity:
 O(n³)            ← string merging
