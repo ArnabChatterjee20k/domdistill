@@ -43,6 +43,9 @@ def run_file(
     batch_size: int = 25,
     use_pool: bool = False,
     concurrency_section_threshold: int = 0,
+    max_adjacent_chunks: int | None = 6,
+    max_merge_span: int | None = None,
+    max_chunks_per_section: int | None = 120,
 ) -> dict:
     chunker = HTMLIntentChunker.from_file(path, penalty=penalty)
     result = chunker.get_chunks(
@@ -52,6 +55,9 @@ def run_file(
         batch_size=batch_size,
         use_pool=use_pool,
         concurrency_section_threshold=concurrency_section_threshold,
+        max_adjacent_chunks=max_adjacent_chunks,
+        max_merge_span=max_merge_span,
+        max_chunks_per_section=max_chunks_per_section,
     )
     return {
         "query": result.query,
@@ -74,13 +80,33 @@ def build_parser() -> argparse.ArgumentParser:
     demo_parser = subparsers.add_parser("demo", help="Run synthetic demo")
     demo_parser.set_defaults(handler=lambda args: run_demo())
 
-    file_parser = subparsers.add_parser("file", help="Run distillation for one HTML file section")
+    file_parser = subparsers.add_parser(
+        "file", help="Run distillation for one HTML file section"
+    )
     file_parser.add_argument("path", type=Path)
     file_parser.add_argument("--query", required=True)
     file_parser.add_argument("--penalty", type=float, default=0.0001)
     file_parser.add_argument("--top-k-chunks", type=int, default=10)
     file_parser.add_argument("--pool-size", type=int, default=1)
     file_parser.add_argument("--batch-size", type=int, default=25)
+    file_parser.add_argument(
+        "--max-adjacent-chunks",
+        type=int,
+        default=6,
+        help="Maximum adjacent chunks merged into one candidate (higher is slower).",
+    )
+    file_parser.add_argument(
+        "--max-merge-span",
+        type=int,
+        default=None,
+        help="Legacy alias for --max-adjacent-chunks.",
+    )
+    file_parser.add_argument(
+        "--max-chunks-per-section",
+        type=int,
+        default=120,
+        help="Cap nodes considered per section to bound candidate growth.",
+    )
     file_parser.add_argument(
         "--use-pool",
         action="store_true",
@@ -102,6 +128,9 @@ def build_parser() -> argparse.ArgumentParser:
             batch_size=args.batch_size,
             use_pool=args.use_pool,
             concurrency_section_threshold=args.concurrency_section_threshold,
+            max_adjacent_chunks=args.max_adjacent_chunks,
+            max_merge_span=args.max_merge_span,
+            max_chunks_per_section=args.max_chunks_per_section,
         )
     )
 

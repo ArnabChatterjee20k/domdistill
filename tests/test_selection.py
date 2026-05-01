@@ -58,6 +58,7 @@ def test_select_precomputed_section_reuses_scores_without_embedding():
             "cache": 1.0,
         },
         penalty=0.01,
+        max_merge_span=None,
     )
 
     section_result, ranked_chunks = select_precomputed_section(work)
@@ -128,7 +129,9 @@ def test_select_sections_document_batch_process_pool_matches_serial(monkeypatch)
         return np.asarray(vectors, dtype=float)
 
     sections = [
-        SectionInput(section_index=0, heading="web", chunks=["http server", "cache layer"]),
+        SectionInput(
+            section_index=0, heading="web", chunks=["http server", "cache layer"]
+        ),
         SectionInput(section_index=1, heading="security", chunks=["security headers"]),
     ]
     monkeypatch.setattr(selection, "get_embedding", fake_get_embedding)
