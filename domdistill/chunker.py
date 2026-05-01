@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .dom_split import SPLITTER_TAGS, split_dom
 from .embeddings import EmbeddingFn
 from .models import SplittedDomNodes
-from .selection import get_chunks, get_score_for_chunk
+from .selection import (
+    select_sections_document_batch,
+    select_chunks,
+    SectionInput,
+)
+
 
 def _section_worker(
     query: str,
@@ -16,46 +22,33 @@ def _section_worker(
     chunks: list[str],
     penalty: float,
     embedding_fn: EmbeddingFn | None,
-) -> "ChunkSelectionResult":
-    score, selected_chunks, discarded_chunks = get_chunks(
+    batch_size: int,
+) -> tuple["ChunkSelectionResult", list["RankedChunk"]]:
+    selection = select_chunks(
         chunks=chunks,
         query=query,
         heading=heading,
         penalty=penalty,
         embedding_fn=embedding_fn,
+        batch_size=batch_size,
     )
-    return ChunkSelectionResult(
-        score=score,
-        selected_chunks=selected_chunks,
-        discarded_chunks=discarded_chunks,
+    section_result = ChunkSelectionResult(
+        score=selection.score,
+        selected_chunks=selection.selected_chunks,
+        discarded_chunks=selection.discarded_chunks,
         heading=heading,
         section_index=section_index,
     )
-
-
-def _score_chunk_batch_worker(
-    query: str,
-    chunk_entries: list[tuple[str, str, int]],
-    penalty: float,
-    embedding_fn: EmbeddingFn | None,
-) -> list["RankedChunk"]:
-    ranked: list[RankedChunk] = []
-    for selected_chunk, heading, section_index in chunk_entries:
-        ranked.append(
-            RankedChunk(
-                content=selected_chunk,
-                score=get_score_for_chunk(
-                    query=query,
-                    heading=heading,
-                    chunk=selected_chunk,
-                    penalty=penalty,
-                    embedding_fn=embedding_fn,
-                ),
-                heading=heading,
-                section_index=section_index,
-            )
+    ranked_chunks = [
+        RankedChunk(
+            content=selected_chunk,
+            score=selection.selected_scores[selected_chunk],
+            heading=heading,
+            section_index=section_index,
         )
-    return ranked
+        for selected_chunk in selection.selected_chunks
+    ]
+    return section_result, ranked_chunks
 
 
 @dataclass(frozen=True)
@@ -137,7 +130,7 @@ class HTMLIntentChunker:
 
         section = sections[section_index]
         chunks = [node.content for node in section.nodes if node.content.strip()]
-        score, selected_chunks, discarded_chunks = get_chunks(
+        selection = select_chunks(
             chunks=chunks,
             query=query,
             heading=section.heading.content,
@@ -145,9 +138,9 @@ class HTMLIntentChunker:
             embedding_fn=self.embedding_fn,
         )
         return ChunkSelectionResult(
-            score=score,
-            selected_chunks=selected_chunks,
-            discarded_chunks=discarded_chunks,
+            score=selection.score,
+            selected_chunks=selection.selected_chunks,
+            discarded_chunks=selection.discarded_chunks,
             heading=section.heading.content,
             section_index=section_index,
         )
@@ -159,6 +152,8 @@ class HTMLIntentChunker:
         top_k_chunks: int = 10,
         pool_size: int = 1,
         batch_size: int = 25,
+        use_pool: bool = False,
+        concurrency_section_threshold: int = 0,
     ) -> MultiSectionChunkResult:
         sections = self.sections()
         if not sections:
@@ -169,10 +164,55 @@ class HTMLIntentChunker:
             raise ValueError("pool_size must be >= 1")
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
+        if concurrency_section_threshold < 0:
+            raise ValueError("concurrency_section_threshold must be >= 0")
 
         section_results: list[ChunkSelectionResult] = []
         ranked_chunks: list[RankedChunk] = []
         use_thread_pool = pool_size > 1
+
+        # fastest route for the small documents(single thread + batch)
+        if self.embedding_fn is None:
+            section_inputs = [
+                SectionInput(
+                    section_index=section_index,
+                    heading=section.heading.content,
+                    chunks=[node.content for node in section.nodes if node.content.strip()],
+                )
+                for section_index, section in enumerate(sections)
+            ]
+            selection_result = select_sections_document_batch(
+                query=query,
+                sections=section_inputs,
+                penalty=self.penalty,
+                top_k_chunks=top_k_chunks,
+                batch_size=batch_size,
+                pool_size=pool_size,
+                use_pool=use_pool,
+                concurrency_section_threshold=concurrency_section_threshold,
+            )
+            return MultiSectionChunkResult(
+                query=selection_result.query,
+                top_sections=[
+                    ChunkSelectionResult(
+                        score=section.score,
+                        selected_chunks=section.selected_chunks,
+                        discarded_chunks=section.discarded_chunks,
+                        heading=section.heading,
+                        section_index=section.section_index,
+                    )
+                    for section in selection_result.top_sections
+                ],
+                top_chunks=[
+                    RankedChunk(
+                        content=chunk.content,
+                        score=chunk.score,
+                        heading=chunk.heading,
+                        section_index=chunk.section_index,
+                    )
+                    for chunk in selection_result.top_chunks
+                ],
+            )
 
         if use_thread_pool:
             with ThreadPoolExecutor(
@@ -187,52 +227,28 @@ class HTMLIntentChunker:
                         [node.content for node in sections[section_index].nodes if node.content.strip()],
                         self.penalty,
                         self.embedding_fn,
+                        batch_size,
                     )
                     for section_index in range(len(sections))
                 ]
                 for future in as_completed(section_futures):
-                    section_results.append(future.result())
-
-                chunk_entries: list[tuple[str, str, int]] = []
-                for result in section_results:
-                    for selected_chunk in result.selected_chunks:
-                        chunk_entries.append((selected_chunk, result.heading, result.section_index))
-
-                if chunk_entries:
-                    chunk_batches = [
-                        chunk_entries[idx : idx + batch_size]
-                        for idx in range(0, len(chunk_entries), batch_size)
-                    ]
-                    batch_futures = [
-                        executor.submit(
-                            _score_chunk_batch_worker,
-                            query,
-                            batch,
-                            self.penalty,
-                            self.embedding_fn,
-                        )
-                        for batch in chunk_batches
-                    ]
-                    for future in as_completed(batch_futures):
-                        ranked_chunks.extend(future.result())
+                    section_result, section_ranked_chunks = future.result()
+                    section_results.append(section_result)
+                    ranked_chunks.extend(section_ranked_chunks)
         else:
             # Serial fallback for small workloads.
             for section_index in range(len(sections)):
-                section_results.append(self._get_section_chunks(query, section_index))
-
-            chunk_entries: list[tuple[str, str, int]] = []
-            for result in section_results:
-                for selected_chunk in result.selected_chunks:
-                    chunk_entries.append((selected_chunk, result.heading, result.section_index))
-
-            ranked_chunks.extend(
-                _score_chunk_batch_worker(
-                    query=query,
-                    chunk_entries=chunk_entries,
-                    penalty=self.penalty,
-                    embedding_fn=self.embedding_fn,
+                section_result, section_ranked_chunks = _section_worker(
+                    query,
+                    section_index,
+                    sections[section_index].heading.content,
+                    [node.content for node in sections[section_index].nodes if node.content.strip()],
+                    self.penalty,
+                    self.embedding_fn,
+                    batch_size,
                 )
-            )
+                section_results.append(section_result)
+                ranked_chunks.extend(section_ranked_chunks)
 
         ranked_sections = sorted(section_results, key=lambda item: item.score, reverse=True)
         top_chunks = sorted(ranked_chunks, key=lambda item: item.score, reverse=True)[
@@ -240,4 +256,22 @@ class HTMLIntentChunker:
         ]
         return MultiSectionChunkResult(query=query, top_sections=ranked_sections, top_chunks=top_chunks)
 
-
+    async def get_chunks_async(
+        self,
+        query: str,
+        *,
+        top_k_chunks: int = 10,
+        pool_size: int = 1,
+        batch_size: int = 25,
+        use_pool: bool = False,
+        concurrency_section_threshold: int = 0,
+    ) -> MultiSectionChunkResult:
+        return await asyncio.to_thread(
+            self.get_chunks,
+            query,
+            top_k_chunks=top_k_chunks,
+            pool_size=pool_size,
+            batch_size=batch_size,
+            use_pool=use_pool,
+            concurrency_section_threshold=concurrency_section_threshold,
+        )

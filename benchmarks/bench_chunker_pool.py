@@ -23,6 +23,8 @@ def run_once(
     pool_size: int,
     penalty: float,
     batch_size: int,
+    use_pool: bool,
+    concurrency_section_threshold: int,
 ) -> float:
     start = time.perf_counter()
     chunker.get_chunks(
@@ -30,6 +32,8 @@ def run_once(
         top_k_chunks=top_k_chunks,
         pool_size=pool_size,
         batch_size=batch_size,
+        use_pool=use_pool,
+        concurrency_section_threshold=concurrency_section_threshold,
     )
     return time.perf_counter() - start
 
@@ -44,6 +48,8 @@ def benchmark(
     pool_sizes: list[int],
     warmup_runs: int,
     batch_sizes: list[int],
+    use_pool: bool,
+    concurrency_section_threshold: int,
 ) -> dict:
     html_content = build_large_html(html_file, repeat_factor)
     unique_pool_sizes = sorted(set(pool_sizes))
@@ -66,6 +72,8 @@ def benchmark(
                     pool_size=pool_size,
                     penalty=penalty,
                     batch_size=batch_size,
+                    use_pool=use_pool,
+                    concurrency_section_threshold=concurrency_section_threshold,
                 )
 
             samples = [
@@ -76,6 +84,8 @@ def benchmark(
                     pool_size=pool_size,
                     penalty=penalty,
                     batch_size=batch_size,
+                    use_pool=use_pool,
+                    concurrency_section_threshold=concurrency_section_threshold,
                 )
                 for _ in range(iterations)
             ]
@@ -115,6 +125,8 @@ def benchmark(
         "query": query,
         "pool_sizes": unique_pool_sizes,
         "batch_sizes": unique_batch_sizes,
+        "use_pool": use_pool,
+        "concurrency_section_threshold": concurrency_section_threshold,
         "baseline": {"pool_size": baseline_key[0], "batch_size": baseline_key[1]},
         "best": best,
         "results": per_config_results,
@@ -174,6 +186,17 @@ def main() -> None:
         default="1,2,4",
         help="Comma-separated pool sizes, e.g. 1,2,4,8",
     )
+    parser.add_argument(
+        "--use-pool",
+        action="store_true",
+        help="Use process-pool DP after document-level embedding when threshold is exceeded.",
+    )
+    parser.add_argument(
+        "--concurrency-section-threshold",
+        type=int,
+        default=0,
+        help="Use process-pool DP only when section count is greater than this value. 0 disables it.",
+    )
     args = parser.parse_args()
     pool_sizes = [int(item.strip()) for item in args.pool_sizes.split(",") if item.strip()]
     batch_sizes = [int(item.strip()) for item in args.batch_sizes.split(",") if item.strip()]
@@ -187,6 +210,8 @@ def main() -> None:
         pool_sizes=pool_sizes,
         warmup_runs=args.warmup_runs,
         batch_sizes=batch_sizes,
+        use_pool=args.use_pool,
+        concurrency_section_threshold=args.concurrency_section_threshold,
     )
 
     if args.target_latency_ms is not None:

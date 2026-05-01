@@ -5,13 +5,14 @@ from .chunker import (
     RankedChunk,
 )
 from .dom_split import split_dom
-from .selection import get_chunks
+from .selection import ChunkSelection, select_chunks
 
 __all__ = [
+    "ChunkSelection",
     "ChunkSelectionResult",
     "HTMLIntentChunker",
     "MultiSectionChunkResult",
     "RankedChunk",
     "split_dom",
-    "get_chunks",
+    "select_chunks",
 ]
