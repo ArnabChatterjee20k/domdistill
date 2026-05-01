@@ -50,6 +50,100 @@ Though dp is present but still that is more embedding heavy. So defaulting threa
 
 No overhead of GIL lock as libs like sentence transformers are precompiled(built outside of python)
 
+### Optimization made
+
+The main bottleneck was not the DP table itself, but where the embedding calls were placed.
+The previous path did this inside the DP candidate loop:
+
+```
+for every section:
+  for every start node i:
+    for every end node j:
+      merged = nodes[i..j]
+      embed(query)
+      embed(heading)
+      embed(merged)
+      score(merged)
+```
+
+For a section with `n` nodes, the DP considers `n * (n + 1) / 2` contiguous merged chunks.
+The old implementation effectively made at least `3 * n * (n + 1) / 2` embedding calls per
+section because query, heading, and merged chunk were embedded for each candidate. It also
+rescored the selected chunks later for ranking, which added another embedding pass.
+
+The optimized path now does:
+
+```
+for every section:
+  build all contiguous merged candidates once
+  embed([query, heading, *candidates]) in one batch
+  store score(candidate) in a dict
+  run DP using precomputed numeric scores
+  return selected chunks with their already-computed scores
+```
+
+So the algorithm still uses the same DP recurrence and still evaluates the same candidate
+space, but embedding is moved out of the inner DP loop. This changes the hot path from many
+small model calls to one batched model call per section. The DP then becomes cheap numeric
+lookup work:
+
+```
+dp[i] = best score from node i to the end
+
+dp[i] = max(
+  dp[i + 1] - discard_penalty,
+  score(nodes[i..j]) + dp[j + 1] - chunk_penalty
+)
+```
+
+The chunker also no longer runs a second scoring pass over `selected_chunks`. `select_chunks`
+returns `selected_scores`, and ranking reuses those scores directly.
+
+Measured impact on the benchmark page:
+
+```
+repeat_factor=3, batch_size=32
+
+before:
+  pool_size=1 -> 10.96s
+  pool_size=2 -> 11.66s
+  pool_size=4 -> 12.69s
+
+after:
+  pool_size=1 -> 5.81s
+  pool_size=2 -> 1.21s
+  pool_size=4 -> 0.95s
+```
+
+For a larger page:
+
+```
+repeat_factor=20, batch_size=32
+
+pool_size=1 -> 18.11s
+pool_size=2 -> 8.77s
+pool_size=4 -> 6.46s
+pool_size=8 -> 7.12s
+```
+
+`pool_size=4` was best in this run. `pool_size=8` was slower, likely because the shared CPU
+model work starts hitting scheduling and compute contention. So "use all cores" should still
+be tuned by benchmark, not assumed to mean maximum worker count.
+
+Time complexity:
+O(n³)            ← string merging
++ O(n² * C)      ← scoring (dominant in practice)
++ O(n²)          ← DP
+
+≈ O(n³ + n² * C)
+
+Space complexity:
+O(n²) ← merged_by_span
+O(n²) ← score_by_chunk
+O(n)  ← memo
+
+≈ O(n²)
+
 # Todos
 
 ### Change heuristics for this algo?

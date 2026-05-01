@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock
 from typing import Callable
 
 import numpy as np
@@ -19,6 +20,7 @@ class SentenceTransformerEmbedder:
         self.save_dir = Path(save_dir)
         self.device = device
         self._model = None
+        self._load_lock = Lock()
 
     def _load(self):
         from sentence_transformers import SentenceTransformer
@@ -34,7 +36,9 @@ class SentenceTransformerEmbedder:
 
     def encode(self, texts: list[str], batch_size: int = 25) -> np.ndarray:
         if self._model is None:
-            self._load()
+            with self._load_lock:
+                if self._model is None:
+                    self._load()
         return np.asarray(self._model.encode(texts, batch_size=batch_size), dtype=float)
 
 _default_embedder: SentenceTransformerEmbedder | None = None
