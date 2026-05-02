@@ -1,8 +1,22 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from domdistill.selection import get_cosine_similarity, get_score_for_chunk
+from domdistill.selection import (
+    get_cosine_similarity,
+    get_score_for_chunk,
+    weighted_query_heading_similarity,
+)
+
+
+def test_weighted_query_heading_similarity_normalizes_weights():
+    assert weighted_query_heading_similarity(
+        1.0, 0.0, query_weight=1.0, heading_weight=1.0
+    ) == pytest.approx(0.5)
+    assert weighted_query_heading_similarity(
+        0.0, 1.0, query_weight=0.85, heading_weight=0.15
+    ) == pytest.approx(0.15)
 
 
 def test_get_cosine_similarity_handles_zero_vector():

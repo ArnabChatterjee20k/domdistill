@@ -7,6 +7,9 @@ import numpy as np
 
 from .embeddings import EmbeddingFn, get_embedding
 
+DEFAULT_QUERY_WEIGHT = 0.85
+DEFAULT_HEADING_WEIGHT = 0.15
+
 
 @dataclass(frozen=True)
 class ChunkSelection:
@@ -80,6 +83,24 @@ def get_cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / denom)
 
 
+def weighted_query_heading_similarity(
+    query_similarity: float,
+    heading_similarity: float,
+    *,
+    query_weight: float = DEFAULT_QUERY_WEIGHT,
+    heading_weight: float = DEFAULT_HEADING_WEIGHT,
+) -> float:
+    """Blend query–chunk and heading–chunk cosine scores (weights sum-normalized)."""
+    if query_weight < 0.0 or heading_weight < 0.0:
+        raise ValueError("query_weight and heading_weight must be >= 0")
+    denom = query_weight + heading_weight
+    if denom <= 0.0:
+        raise ValueError("query_weight + heading_weight must be > 0")
+    return (
+        query_weight * query_similarity + heading_weight * heading_similarity
+    ) / denom
+
+
 def get_score_for_chunk(
     query: str,
     heading: str,
@@ -87,6 +108,9 @@ def get_score_for_chunk(
     penalty: float = 0.0001,
     embedding_fn: EmbeddingFn | None = None,
     batch_size: int = 25,
+    *,
+    query_weight: float = DEFAULT_QUERY_WEIGHT,
+    heading_weight: float = DEFAULT_HEADING_WEIGHT,
 ) -> float:
     if embedding_fn is None:
         vectors = get_embedding([query, heading, chunk], batch_size=batch_size)
@@ -99,7 +123,13 @@ def get_score_for_chunk(
     query_similarity_score = get_cosine_similarity(query_embedding, chunk_embedding)
     heading_similarity_score = get_cosine_similarity(heading_embedding, chunk_embedding)
     length_penalty = penalty * np.sqrt(max(len(chunk), 1))
-    return max(query_similarity_score, heading_similarity_score) - length_penalty
+    combined = weighted_query_heading_similarity(
+        query_similarity_score,
+        heading_similarity_score,
+        query_weight=query_weight,
+        heading_weight=heading_weight,
+    )
+    return combined - length_penalty
 
 
 def get_score_from_embeddings(
@@ -109,11 +139,19 @@ def get_score_from_embeddings(
     chunk_embedding: np.ndarray,
     chunk: str,
     penalty: float,
+    query_weight: float = DEFAULT_QUERY_WEIGHT,
+    heading_weight: float = DEFAULT_HEADING_WEIGHT,
 ) -> float:
     query_similarity_score = get_cosine_similarity(query_embedding, chunk_embedding)
     heading_similarity_score = get_cosine_similarity(heading_embedding, chunk_embedding)
     length_penalty = penalty * np.sqrt(max(len(chunk), 1))
-    return max(query_similarity_score, heading_similarity_score) - length_penalty
+    combined = weighted_query_heading_similarity(
+        query_similarity_score,
+        heading_similarity_score,
+        query_weight=query_weight,
+        heading_weight=heading_weight,
+    )
+    return combined - length_penalty
 
 
 def build_chunk_candidates(
@@ -154,6 +192,8 @@ def _score_candidates(
     penalty: float,
     embedding_fn: EmbeddingFn | None,
     batch_size: int,
+    query_weight: float = DEFAULT_QUERY_WEIGHT,
+    heading_weight: float = DEFAULT_HEADING_WEIGHT,
 ) -> dict[str, float]:
     if not candidate_chunks:
         return {}
@@ -180,9 +220,13 @@ def _score_candidates(
             heading_embedding, chunk_embedding
         )
         length_penalty = penalty * np.sqrt(max(len(candidate_chunk), 1))
-        scores[candidate_chunk] = (
-            max(query_similarity_score, heading_similarity_score) - length_penalty
+        combined = weighted_query_heading_similarity(
+            query_similarity_score,
+            heading_similarity_score,
+            query_weight=query_weight,
+            heading_weight=heading_weight,
         )
+        scores[candidate_chunk] = combined - length_penalty
     return scores
 
 
@@ -194,6 +238,9 @@ def select_chunks(
     embedding_fn: EmbeddingFn | None = None,
     batch_size: int = 25,
     max_merge_span: int | None = None,
+    *,
+    query_weight: float = DEFAULT_QUERY_WEIGHT,
+    heading_weight: float = DEFAULT_HEADING_WEIGHT,
 ) -> ChunkSelection:
     if chunks is None:
         chunks = []
@@ -207,12 +254,15 @@ def select_chunks(
         penalty=penalty,
         embedding_fn=embedding_fn,
         batch_size=batch_size,
+        query_weight=query_weight,
+        heading_weight=heading_weight,
     )
     return select_chunks_with_scores(
         chunks=chunks,
         merged_by_span=candidates.merged_by_span,
         score_by_chunk=score_by_chunk,
         penalty=penalty,
+        max_merge_span=max_merge_span,
     )
 
 
@@ -289,6 +339,8 @@ def select_sections_document_batch(
     concurrency_section_threshold: int = 0,
     max_merge_span: int | None = None,
     max_chunks_per_section: int | None = None,
+    query_weight: float = DEFAULT_QUERY_WEIGHT,
+    heading_weight: float = DEFAULT_HEADING_WEIGHT,
 ) -> MultiSectionSelectionResult:
     if top_k_chunks < 1:
         raise ValueError("top_k_chunks must be >= 1")
@@ -345,6 +397,8 @@ def select_sections_document_batch(
                 chunk_embedding=embedding_by_text[candidate],
                 chunk=candidate,
                 penalty=penalty,
+                query_weight=query_weight,
+                heading_weight=heading_weight,
             )
             for candidate in prepared.candidates
         }

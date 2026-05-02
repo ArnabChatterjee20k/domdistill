@@ -5,7 +5,11 @@ import json
 from pathlib import Path
 
 from .chunker import HTMLIntentChunker
-from .selection import select_chunks
+from .selection import (
+    DEFAULT_HEADING_WEIGHT,
+    DEFAULT_QUERY_WEIGHT,
+    select_chunks,
+)
 
 
 def run_demo() -> dict:
@@ -46,6 +50,8 @@ def run_file(
     max_adjacent_chunks: int | None = 6,
     max_merge_span: int | None = None,
     max_chunks_per_section: int | None = 120,
+    query_weight: float = DEFAULT_QUERY_WEIGHT,
+    heading_weight: float = DEFAULT_HEADING_WEIGHT,
 ) -> dict:
     chunker = HTMLIntentChunker.from_file(path, penalty=penalty)
     result = chunker.get_chunks(
@@ -58,6 +64,8 @@ def run_file(
         max_adjacent_chunks=max_adjacent_chunks,
         max_merge_span=max_merge_span,
         max_chunks_per_section=max_chunks_per_section,
+        query_weight=query_weight,
+        heading_weight=heading_weight,
     )
     return {
         "query": result.query,
@@ -118,6 +126,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Use process-pool DP only when section count is greater than this value. 0 disables it.",
     )
+    file_parser.add_argument(
+        "--query-weight",
+        type=float,
+        default=DEFAULT_QUERY_WEIGHT,
+        help="Weight for query–chunk cosine vs heading–chunk (normalized with --heading-weight).",
+    )
+    file_parser.add_argument(
+        "--heading-weight",
+        type=float,
+        default=DEFAULT_HEADING_WEIGHT,
+        help="Weight for heading–chunk cosine vs query–chunk.",
+    )
     file_parser.set_defaults(
         handler=lambda args: run_file(
             path=args.path,
@@ -131,6 +151,8 @@ def build_parser() -> argparse.ArgumentParser:
             max_adjacent_chunks=args.max_adjacent_chunks,
             max_merge_span=args.max_merge_span,
             max_chunks_per_section=args.max_chunks_per_section,
+            query_weight=args.query_weight,
+            heading_weight=args.heading_weight,
         )
     )
 

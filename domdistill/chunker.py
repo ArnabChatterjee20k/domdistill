@@ -9,6 +9,8 @@ from .dom_split import SPLITTER_TAGS, split_dom
 from .embeddings import EmbeddingFn
 from .models import SplittedDomNodes
 from .selection import (
+    DEFAULT_HEADING_WEIGHT,
+    DEFAULT_QUERY_WEIGHT,
     select_sections_document_batch,
     select_chunks,
     SectionInput,
@@ -25,6 +27,8 @@ def _section_worker(
     batch_size: int,
     max_merge_span: int | None,
     max_chunks_per_section: int | None,
+    query_weight: float,
+    heading_weight: float,
 ) -> tuple["ChunkSelectionResult", list["RankedChunk"]]:
     section_chunks = chunks
     if (
@@ -40,6 +44,8 @@ def _section_worker(
         embedding_fn=embedding_fn,
         batch_size=batch_size,
         max_merge_span=max_merge_span,
+        query_weight=query_weight,
+        heading_weight=heading_weight,
     )
     section_result = ChunkSelectionResult(
         score=selection.score,
@@ -93,12 +99,14 @@ class HTMLIntentChunker:
         penalty: float = 0.0001,
         cache_dir: str | Path | None = None,
         embedding_fn: EmbeddingFn | None = None,
+        page_url: str | None = None,
     ) -> None:
         self.html_content = html_content
         self.splitter_tags = tuple(splitter_tags)
         self.penalty = penalty
         self.cache_dir = cache_dir
         self.embedding_fn = embedding_fn
+        self.page_url = page_url
         self._sections: list[SplittedDomNodes] | None = None
 
     @classmethod
@@ -111,6 +119,7 @@ class HTMLIntentChunker:
         cache_dir: str | Path | None = None,
         embedding_fn: EmbeddingFn | None = None,
         encoding: str = "utf-8",
+        page_url: str | None = None,
     ) -> "HTMLIntentChunker":
         file_path = Path(path)
         return cls(
@@ -119,6 +128,7 @@ class HTMLIntentChunker:
             penalty=penalty,
             cache_dir=cache_dir,
             embedding_fn=embedding_fn,
+            page_url=page_url,
         )
 
     def sections(self) -> list[SplittedDomNodes]:
@@ -127,6 +137,7 @@ class HTMLIntentChunker:
                 self.html_content,
                 cache_dir=self.cache_dir,
                 splitter_tags=self.splitter_tags,
+                base_url=self.page_url,
             )
         return self._sections
 
@@ -169,6 +180,8 @@ class HTMLIntentChunker:
         max_adjacent_chunks: int | None = 10,
         max_merge_span: int | None = None,
         max_chunks_per_section: int | None = 120,
+        query_weight: float = DEFAULT_QUERY_WEIGHT,
+        heading_weight: float = DEFAULT_HEADING_WEIGHT,
     ) -> MultiSectionChunkResult:
         sections = self.sections()
         if not sections:
@@ -188,6 +201,10 @@ class HTMLIntentChunker:
             raise ValueError("max_merge_span must be >= 1")
         if max_chunks_per_section is not None and max_chunks_per_section < 1:
             raise ValueError("max_chunks_per_section must be >= 1")
+        if query_weight < 0.0 or heading_weight < 0.0:
+            raise ValueError("query_weight and heading_weight must be >= 0")
+        if query_weight + heading_weight <= 0.0:
+            raise ValueError("query_weight + heading_weight must be > 0")
 
         section_results: list[ChunkSelectionResult] = []
         ranked_chunks: list[RankedChunk] = []
@@ -216,6 +233,8 @@ class HTMLIntentChunker:
                 concurrency_section_threshold=concurrency_section_threshold,
                 max_merge_span=merge_window,
                 max_chunks_per_section=max_chunks_per_section,
+                query_weight=query_weight,
+                heading_weight=heading_weight,
             )
             return MultiSectionChunkResult(
                 query=selection_result.query,
@@ -260,6 +279,8 @@ class HTMLIntentChunker:
                         batch_size,
                         merge_window,
                         max_chunks_per_section,
+                        query_weight,
+                        heading_weight,
                     )
                     for section_index in range(len(sections))
                 ]
@@ -284,6 +305,8 @@ class HTMLIntentChunker:
                     batch_size,
                     merge_window,
                     max_chunks_per_section,
+                    query_weight,
+                    heading_weight,
                 )
                 section_results.append(section_result)
                 ranked_chunks.extend(section_ranked_chunks)
@@ -310,6 +333,8 @@ class HTMLIntentChunker:
         max_adjacent_chunks: int | None = 6,
         max_merge_span: int | None = None,
         max_chunks_per_section: int | None = 120,
+        query_weight: float = DEFAULT_QUERY_WEIGHT,
+        heading_weight: float = DEFAULT_HEADING_WEIGHT,
     ) -> MultiSectionChunkResult:
         return await asyncio.to_thread(
             self.get_chunks,
@@ -322,4 +347,6 @@ class HTMLIntentChunker:
             max_adjacent_chunks=max_adjacent_chunks,
             max_merge_span=max_merge_span,
             max_chunks_per_section=max_chunks_per_section,
+            query_weight=query_weight,
+            heading_weight=heading_weight,
         )
