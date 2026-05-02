@@ -90,6 +90,36 @@ def test_split_dom_drops_banner_and_footer_chrome():
     assert "Arnab" in flat
 
 
+def test_split_dom_merges_short_inline_code_into_paragraph():
+    html_content = """
+    <html><body>
+      <h1>T</h1>
+      <p>Before <code>x = 1</code> after.</p>
+    </body></html>
+    """
+    sections = split_dom(html_content, min_inline_segment_chars=40)
+    assert len(sections[0].nodes) == 1
+    assert sections[0].nodes[0].tag == "p"
+    assert sections[0].nodes[0].content == "Before x = 1 after."
+
+
+def test_split_dom_emits_long_inline_code_as_own_node():
+    long_snippet = "def f(): return 42  # " + "x" * 25
+    assert len(long_snippet) >= 40
+    html_content = f"""
+    <html><body>
+      <h1>T</h1>
+      <p>Intro <code>{long_snippet}</code> outro.</p>
+    </body></html>
+    """
+    sections = split_dom(html_content, min_inline_segment_chars=40)
+    tags = [n.tag for n in sections[0].nodes]
+    contents = [n.content for n in sections[0].nodes]
+    assert tags == ["p", "code", "p"]
+    assert "Intro" in contents[0] and "outro" in contents[2]
+    assert contents[1] == " ".join(long_snippet.split())
+
+
 def test_split_dom_appends_resolved_url_next_to_anchor_text():
     html_content = """
     <html><body>
