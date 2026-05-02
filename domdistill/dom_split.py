@@ -58,7 +58,42 @@ CHROME_DROP_XPATH = (
     "//aside",
 )
 
-DOM_SPLIT_CACHE_VERSION = "4"
+DOM_SPLIT_CACHE_VERSION = "5"
+
+DEFAULT_MIN_INLINE_SEGMENT_CHARS = 40
+
+# Inline phrasing content: merged into the parent block unless text length >= threshold.
+INLINE_TAGS_FOR_SPLIT = frozenset(
+    {
+        "a",
+        "abbr",
+        "b",
+        "bdi",
+        "bdo",
+        "cite",
+        "code",
+        "data",
+        "dfn",
+        "em",
+        "i",
+        "kbd",
+        "mark",
+        "q",
+        "s",
+        "samp",
+        "small",
+        "span",
+        "strong",
+        "sub",
+        "sup",
+        "time",
+        "u",
+        "var",
+        "ruby",
+        "rt",
+        "rp",
+    }
+)
 
 
 def _collapse_ws(text: str) -> str:
@@ -117,6 +152,70 @@ def _inline_text_with_links(element, base_url: str | None) -> str:
 
 def _cell_plain_text(cell, base_url: str | None) -> str:
     return _collapse_ws(_inline_text_with_links(cell, base_url))
+
+
+def _segment_block_tags(splitter_tags: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(splitter_tags) | frozenset(TEXT_BLOCK_TAGS)
+
+
+def _has_segmenting_block_ancestor(
+    el,
+    segment_tags: frozenset[str],
+) -> bool:
+    parent = el.getparent()
+    while parent is not None:
+        tag = parent.tag.lower() if isinstance(parent.tag, str) else ""
+        if tag in segment_tags:
+            return True
+        parent = parent.getparent()
+    return False
+
+
+def _segment_block_element(
+    element,
+    block_tag: str,
+    base_url: str | None,
+    min_inline_chars: int,
+) -> list[tuple[str, str]]:
+    """Split ``block_tag`` into runs: short inlines fold into the block; long inlines
+    become their own ``(tag, text)`` segments (preserving order)."""
+    run: list[str] = []
+    segments: list[tuple[str, str]] = []
+
+    def flush_run() -> None:
+        if not run:
+            return
+        merged = _collapse_ws(" ".join(run))
+        if merged:
+            segments.append((block_tag, merged))
+        run.clear()
+
+    if element.text and element.text.strip():
+        run.append(element.text.strip())
+
+    for child in element:
+        ctag = child.tag.lower() if isinstance(child.tag, str) else ""
+        if ctag in INLINE_TAGS_FOR_SPLIT:
+            if ctag == "a":
+                piece = _anchor_to_text(child, base_url).strip()
+            else:
+                piece = _inline_text_with_links(child, base_url).strip()
+            if len(piece) >= min_inline_chars:
+                flush_run()
+                if piece:
+                    segments.append((ctag, _collapse_ws(piece)))
+            else:
+                if piece:
+                    run.append(piece)
+        else:
+            sub = _inline_text_with_links(child, base_url).strip()
+            if sub:
+                run.append(sub)
+        if child.tail and child.tail.strip():
+            run.append(child.tail.strip())
+
+    flush_run()
+    return segments
 
 
 def _row_belongs_to_table(tr, table) -> bool:
@@ -182,11 +281,13 @@ def _cache_key(
     html_content: str,
     splitter_tags: tuple[str, ...],
     base_url: str | None,
+    min_inline_segment_chars: int,
 ) -> str:
     joined_tags = ",".join(splitter_tags)
     base = base_url or ""
     content = (
         f"{DOM_SPLIT_CACHE_VERSION}\n{joined_tags}\n{base}\n"
+        f"{min_inline_segment_chars}\n"
         f"{','.join(IGNORED_TAGS)}\n{CHROME_DROP_XPATH}\n{html_content}"
     )
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -213,14 +314,17 @@ def split_dom(
     cache_dir: str | Path | None = None,
     splitter_tags: tuple[str, ...] = SPLITTER_TAGS,
     base_url: str | None = None,
+    min_inline_segment_chars: int = DEFAULT_MIN_INLINE_SEGMENT_CHARS,
 ) -> list[SplittedDomNodes]:
     splitter_tags = tuple(tag.lower() for tag in splitter_tags)
+    if min_inline_segment_chars < 1:
+        raise ValueError("min_inline_segment_chars must be >= 1")
     if cache_dir is not None:
         cache_path = Path(cache_dir)
         cache_path.mkdir(parents=True, exist_ok=True)
         cached_file = (
             cache_path
-            / f"split_dom_{_cache_key(html_content, splitter_tags, base_url)}.pkl"
+            / f"split_dom_{_cache_key(html_content, splitter_tags, base_url, min_inline_segment_chars)}.pkl"
         )
         if cached_file.exists():
             with cached_file.open("rb") as handle:
@@ -237,6 +341,7 @@ def split_dom(
     _drop_subtrees(chrome_nodes)
 
     dom_nodes: list[Node] = []
+    segment_tags = _segment_block_tags(splitter_tags)
 
     for element in tree.iter():
         tag = getattr(element, "tag", "")
@@ -253,18 +358,35 @@ def split_dom(
                 dom_nodes.append(Node(tag="table", content=text))
             continue
 
+        if normalized_tag != "table" and element.xpath("ancestor::table[1]"):
+            continue
+
+        if normalized_tag in INLINE_TAGS_FOR_SPLIT and _has_segmenting_block_ancestor(
+            element, segment_tags
+        ):
+            continue
+
         should_extract = (
             normalized_tag in splitter_tags or normalized_tag in TEXT_BLOCK_TAGS
         )
         if not should_extract:
             continue
 
-        text = _inline_text_with_links(element, base_url)
-        if not text:
+        if normalized_tag == "pre":
+            text = _inline_text_with_links(element, base_url)
+            if text:
+                dom_nodes.append(Node(tag="pre", content=text))
             continue
-        if normalized_tag not in ("pre", "code"):
-            text = _collapse_ws(text)
-        dom_nodes.append(Node(tag=normalized_tag, content=text))
+
+        segments = _segment_block_element(
+            element,
+            normalized_tag,
+            base_url,
+            min_inline_segment_chars,
+        )
+        for seg_tag, seg_text in segments:
+            if seg_text:
+                dom_nodes.append(Node(tag=seg_tag, content=seg_text))
 
     sections: list[SplittedDomNodes] = []
     current_heading = Node(tag="root", content="root")

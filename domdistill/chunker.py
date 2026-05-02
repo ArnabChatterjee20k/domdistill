@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
-from .dom_split import SPLITTER_TAGS, split_dom
+from .dom_split import DEFAULT_MIN_INLINE_SEGMENT_CHARS, SPLITTER_TAGS, split_dom
 from .embeddings import EmbeddingFn
 from .models import SplittedDomNodes
 from .selection import (
@@ -100,6 +100,7 @@ class HTMLIntentChunker:
         cache_dir: str | Path | None = None,
         embedding_fn: EmbeddingFn | None = None,
         page_url: str | None = None,
+        min_inline_segment_chars: int = DEFAULT_MIN_INLINE_SEGMENT_CHARS,
     ) -> None:
         self.html_content = html_content
         self.splitter_tags = tuple(splitter_tags)
@@ -107,6 +108,7 @@ class HTMLIntentChunker:
         self.cache_dir = cache_dir
         self.embedding_fn = embedding_fn
         self.page_url = page_url
+        self.min_inline_segment_chars = min_inline_segment_chars
         self._sections: list[SplittedDomNodes] | None = None
 
     @classmethod
@@ -120,6 +122,7 @@ class HTMLIntentChunker:
         embedding_fn: EmbeddingFn | None = None,
         encoding: str = "utf-8",
         page_url: str | None = None,
+        min_inline_segment_chars: int = DEFAULT_MIN_INLINE_SEGMENT_CHARS,
     ) -> "HTMLIntentChunker":
         file_path = Path(path)
         return cls(
@@ -129,6 +132,7 @@ class HTMLIntentChunker:
             cache_dir=cache_dir,
             embedding_fn=embedding_fn,
             page_url=page_url,
+            min_inline_segment_chars=min_inline_segment_chars,
         )
 
     def sections(self) -> list[SplittedDomNodes]:
@@ -138,6 +142,7 @@ class HTMLIntentChunker:
                 cache_dir=self.cache_dir,
                 splitter_tags=self.splitter_tags,
                 base_url=self.page_url,
+                min_inline_segment_chars=self.min_inline_segment_chars,
             )
         return self._sections
 
