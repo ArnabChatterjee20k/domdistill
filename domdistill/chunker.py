@@ -7,7 +7,8 @@ from pathlib import Path
 
 from .dom_split import DEFAULT_MIN_INLINE_SEGMENT_CHARS, SPLITTER_TAGS, split_dom
 from .embeddings import EmbeddingFn
-from .models import SplittedDomNodes
+from .models import SplittedDomNodes, DocumentFingerprint, SectionFingerprint
+from .simhash import get_simhash
 from .selection import (
     DEFAULT_HEADING_WEIGHT,
     DEFAULT_QUERY_WEIGHT,
@@ -145,6 +146,30 @@ class HTMLIntentChunker:
                 min_inline_segment_chars=self.min_inline_segment_chars,
             )
         return self._sections
+    
+    def get_fingerprint(self) -> DocumentFingerprint:
+        sections = self.sections()
+        section_fingerprints: list[SectionFingerprint] = []
+        document_content_nodes: list[str] = []
+
+        for section in sections:
+            node_text = "\n".join(
+                node.content for node in section.nodes if node.content.strip()
+            )
+            content = f"{section.heading.content}\n{node_text}"
+            document_content_nodes.append(content)
+            section_fingerprints.append(
+                SectionFingerprint(
+                    heading=section.heading.content,
+                    hash=get_simhash(content),
+                )
+            )
+
+        document_content = "\n".join(document_content_nodes)
+        return DocumentFingerprint(
+            document_hash=get_simhash(document_content),
+            sections=section_fingerprints,
+        )
 
     def _get_section_chunks(
         self, query: str, section_index: int
