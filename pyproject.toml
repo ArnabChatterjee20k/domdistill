@@ -18,6 +18,7 @@ classifiers = [
 dependencies = [
     "lxml>=6.1.0",
     "sentence-transformers>=5.4.1",
+    "xxhash>=3.8.0",
 ]
 
 [project.optional-dependencies]
