@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
@@ -9,6 +10,12 @@ from .embeddings import EmbeddingFn, get_embedding
 
 DEFAULT_QUERY_WEIGHT = 0.85
 DEFAULT_HEADING_WEIGHT = 0.15
+
+# A reranker scores candidate chunks against a query directly (cross-encoder
+# style), instead of comparing independently-made embeddings (bi-encoder).
+# It receives (query, heading, candidates) and returns one relevance score per
+# candidate, in the same order. Higher means more relevant.
+RerankFn = Callable[[str, str, Sequence[str]], Sequence[float]]
 
 
 @dataclass(frozen=True)
@@ -256,6 +263,80 @@ def select_chunks(
         batch_size=batch_size,
         query_weight=query_weight,
         heading_weight=heading_weight,
+    )
+    return select_chunks_with_scores(
+        chunks=chunks,
+        merged_by_span=candidates.merged_by_span,
+        score_by_chunk=score_by_chunk,
+        penalty=penalty,
+        max_merge_span=max_merge_span,
+    )
+
+
+def score_candidates_rerank(
+    *,
+    candidate_chunks: list[str],
+    query: str,
+    heading: str,
+    rerank_fn: RerankFn,
+    penalty: float,
+    apply_length_penalty: bool = True,
+) -> dict[str, float]:
+    """Score candidate chunks with a cross-encoder-style reranker.
+
+    The reranker returns one relevance score per candidate; we optionally
+    subtract the same ``penalty * sqrt(len)`` term the embedding path uses so the
+    downstream DP selection behaves consistently across both scorers.
+    """
+    if not candidate_chunks:
+        return {}
+
+    raw_scores = list(rerank_fn(query, heading, list(candidate_chunks)))
+    if len(raw_scores) != len(candidate_chunks):
+        raise ValueError(
+            "rerank_fn returned "
+            f"{len(raw_scores)} scores for {len(candidate_chunks)} candidates"
+        )
+
+    scores: dict[str, float] = {}
+    for candidate_chunk, raw_score in zip(candidate_chunks, raw_scores):
+        length_penalty = (
+            penalty * np.sqrt(max(len(candidate_chunk), 1))
+            if apply_length_penalty
+            else 0.0
+        )
+        scores[candidate_chunk] = float(raw_score) - float(length_penalty)
+    return scores
+
+
+def select_chunks_reranked(
+    chunks: list[str] | None = None,
+    query: str = "",
+    heading: str = "",
+    *,
+    rerank_fn: RerankFn,
+    penalty: float = 0.0001,
+    max_merge_span: int | None = None,
+    apply_length_penalty: bool = True,
+) -> ChunkSelection:
+    """Drop-in replacement for :func:`select_chunks` backed by a reranker.
+
+    Instead of embedding the query, heading and chunks and comparing them with
+    cosine similarity, this scores each candidate span directly through
+    ``rerank_fn`` and runs the same DP selection over the resulting scores.
+    """
+    if chunks is None:
+        chunks = []
+
+    candidates = build_chunk_candidates(chunks, max_merge_span=max_merge_span)
+
+    score_by_chunk = score_candidates_rerank(
+        candidate_chunks=candidates.candidates,
+        query=query,
+        heading=heading,
+        rerank_fn=rerank_fn,
+        penalty=penalty,
+        apply_length_penalty=apply_length_penalty,
     )
     return select_chunks_with_scores(
         chunks=chunks,

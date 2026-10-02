@@ -129,6 +129,54 @@ selection = select_chunks(
 print(selection.selected_chunks)
 ```
 
+### 3b) Cross-encoder reranking with laya (optional)
+
+The default scorer is a **bi-encoder**: it embeds the query, heading and chunks
+independently and ranks by cosine similarity. For higher accuracy you can swap in
+a **cross-encoder reranker** that reads the query and each candidate chunk
+*together* and emits a relevance score. The built-in
+[`laya`](https://github.com/NandhaKishorM/laya) adapter frames this as a yes/no
+("is this passage relevant to the query?") decision and uses `P(true)` as the
+score.
+
+Install the optional extra:
+
+```bash
+pip install "domdistill[laya]"   # pulls in torch + laya (~1.7 GB of weights)
+```
+
+Pass a `rerank_fn` to the chunker (it takes precedence over `embedding_fn`):
+
+```python
+from domdistill import HTMLIntentChunker, LayaReranker
+
+chunker = HTMLIntentChunker(html_content, rerank_fn=LayaReranker())
+result = chunker.get_chunks("http server security", top_k_chunks=5)
+```
+
+Or use the low-level selector directly. A reranker is any callable
+`(query, heading, candidates) -> list[float]` (the `RerankFn` type), so you can
+plug in your own cross-encoder instead of laya:
+
+```python
+from domdistill import select_chunks_reranked, LayaReranker
+
+selection = select_chunks_reranked(
+    chunks=["http server security basics", "unrelated filler"],
+    query="http server security",
+    heading="web",
+    rerank_fn=LayaReranker(),
+    penalty=0.01,
+)
+print(selection.selected_chunks)
+```
+
+Trade-off: a reranker runs one model forward pass **per candidate span**, so it
+has no reusable index and costs more per query than the cached bi-encoder — best
+for reranking a small per-page candidate set, not first-stage retrieval over a
+large corpus. See `benchmarks/eval_rerank.py` for a head-to-head quality/speed
+comparison.
+
 ### 4) Glue everything across all sections
 
 ```python

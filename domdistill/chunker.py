@@ -7,15 +7,17 @@ from pathlib import Path
 
 from .dom_split import DEFAULT_MIN_INLINE_SEGMENT_CHARS, SPLITTER_TAGS, split_dom
 from .embeddings import EmbeddingFn
-from .models import SplittedDomNodes, DocumentFingerprint, SectionFingerprint
-from .simhash import get_simhash
+from .models import DocumentFingerprint, SectionFingerprint, SplittedDomNodes
 from .selection import (
     DEFAULT_HEADING_WEIGHT,
     DEFAULT_QUERY_WEIGHT,
-    select_sections_document_batch,
-    select_chunks,
+    RerankFn,
     SectionInput,
+    select_chunks,
+    select_chunks_reranked,
+    select_sections_document_batch,
 )
+from .simhash import get_simhash
 
 
 def _section_worker(
@@ -30,24 +32,35 @@ def _section_worker(
     max_chunks_per_section: int | None,
     query_weight: float,
     heading_weight: float,
-) -> tuple["ChunkSelectionResult", list["RankedChunk"]]:
+    rerank_fn: RerankFn | None = None,
+) -> tuple[ChunkSelectionResult, list[RankedChunk]]:
     section_chunks = chunks
     if (
         max_chunks_per_section is not None
         and len(section_chunks) > max_chunks_per_section
     ):
         section_chunks = section_chunks[:max_chunks_per_section]
-    selection = select_chunks(
-        chunks=section_chunks,
-        query=query,
-        heading=heading,
-        penalty=penalty,
-        embedding_fn=embedding_fn,
-        batch_size=batch_size,
-        max_merge_span=max_merge_span,
-        query_weight=query_weight,
-        heading_weight=heading_weight,
-    )
+    if rerank_fn is not None:
+        selection = select_chunks_reranked(
+            chunks=section_chunks,
+            query=query,
+            heading=heading,
+            rerank_fn=rerank_fn,
+            penalty=penalty,
+            max_merge_span=max_merge_span,
+        )
+    else:
+        selection = select_chunks(
+            chunks=section_chunks,
+            query=query,
+            heading=heading,
+            penalty=penalty,
+            embedding_fn=embedding_fn,
+            batch_size=batch_size,
+            max_merge_span=max_merge_span,
+            query_weight=query_weight,
+            heading_weight=heading_weight,
+        )
     section_result = ChunkSelectionResult(
         score=selection.score,
         selected_chunks=selection.selected_chunks,
@@ -100,6 +113,7 @@ class HTMLIntentChunker:
         penalty: float = 0.0001,
         cache_dir: str | Path | None = None,
         embedding_fn: EmbeddingFn | None = None,
+        rerank_fn: RerankFn | None = None,
         page_url: str | None = None,
         min_inline_segment_chars: int = DEFAULT_MIN_INLINE_SEGMENT_CHARS,
     ) -> None:
@@ -108,6 +122,7 @@ class HTMLIntentChunker:
         self.penalty = penalty
         self.cache_dir = cache_dir
         self.embedding_fn = embedding_fn
+        self.rerank_fn = rerank_fn
         self.page_url = page_url
         self.min_inline_segment_chars = min_inline_segment_chars
         self._sections: list[SplittedDomNodes] | None = None
@@ -121,10 +136,11 @@ class HTMLIntentChunker:
         penalty: float = 0.0001,
         cache_dir: str | Path | None = None,
         embedding_fn: EmbeddingFn | None = None,
+        rerank_fn: RerankFn | None = None,
         encoding: str = "utf-8",
         page_url: str | None = None,
         min_inline_segment_chars: int = DEFAULT_MIN_INLINE_SEGMENT_CHARS,
-    ) -> "HTMLIntentChunker":
+    ) -> HTMLIntentChunker:
         file_path = Path(path)
         return cls(
             html_content=file_path.read_text(encoding=encoding),
@@ -132,6 +148,7 @@ class HTMLIntentChunker:
             penalty=penalty,
             cache_dir=cache_dir,
             embedding_fn=embedding_fn,
+            rerank_fn=rerank_fn,
             page_url=page_url,
             min_inline_segment_chars=min_inline_segment_chars,
         )
@@ -182,14 +199,24 @@ class HTMLIntentChunker:
 
         section = sections[section_index]
         chunks = [node.content for node in section.nodes if node.content.strip()]
-        selection = select_chunks(
-            chunks=chunks,
-            query=query,
-            heading=section.heading.content,
-            penalty=self.penalty,
-            embedding_fn=self.embedding_fn,
-            max_merge_span=6,
-        )
+        if self.rerank_fn is not None:
+            selection = select_chunks_reranked(
+                chunks=chunks,
+                query=query,
+                heading=section.heading.content,
+                rerank_fn=self.rerank_fn,
+                penalty=self.penalty,
+                max_merge_span=6,
+            )
+        else:
+            selection = select_chunks(
+                chunks=chunks,
+                query=query,
+                heading=section.heading.content,
+                penalty=self.penalty,
+                embedding_fn=self.embedding_fn,
+                max_merge_span=6,
+            )
         return ChunkSelectionResult(
             score=selection.score,
             selected_chunks=selection.selected_chunks,
@@ -240,8 +267,10 @@ class HTMLIntentChunker:
         ranked_chunks: list[RankedChunk] = []
         use_thread_pool = pool_size > 1
 
-        # fastest route for the small documents(single thread + batch)
-        if self.embedding_fn is None:
+        # fastest route for the small documents(single thread + batch).
+        # A reranker scores query+chunk jointly, so it cannot use the shared
+        # embedding batch path; it falls through to the per-section route below.
+        if self.embedding_fn is None and self.rerank_fn is None:
             section_inputs = [
                 SectionInput(
                     section_index=section_index,
@@ -311,6 +340,7 @@ class HTMLIntentChunker:
                         max_chunks_per_section,
                         query_weight,
                         heading_weight,
+                        self.rerank_fn,
                     )
                     for section_index in range(len(sections))
                 ]
@@ -337,6 +367,7 @@ class HTMLIntentChunker:
                     max_chunks_per_section,
                     query_weight,
                     heading_weight,
+                    self.rerank_fn,
                 )
                 section_results.append(section_result)
                 ranked_chunks.extend(section_ranked_chunks)

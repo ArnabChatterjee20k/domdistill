@@ -30,6 +30,9 @@ dev = [
 benchmark = [
     "psutil>=6.0.0",
 ]
+laya = [
+    "laya>=0.3.0",
+]
 
 [project.scripts]
 domdistill = "domdistill.cli:main"
