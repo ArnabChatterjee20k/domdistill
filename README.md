@@ -154,9 +154,21 @@ chunker = HTMLIntentChunker(html_content, rerank_fn=LayaReranker())
 result = chunker.get_chunks("http server security", top_k_chunks=5)
 ```
 
+Prefer to reuse an existing [Ollama](https://ollama.com/library/tev1) server
+instead of pulling torch? `Tev1Reranker` talks to Ollama's `/v1/systemone`
+endpoint (default model `tev1:0.8b`, ~800 MB) with the same relevance framing —
+no extra Python dependency, just `ollama pull tev1:0.8b`:
+
+```python
+from domdistill import HTMLIntentChunker, Tev1Reranker
+
+chunker = HTMLIntentChunker(html_content, rerank_fn=Tev1Reranker())
+# Tev1Reranker(model="tev1:4b", host="http://my-ollama:11434") to override.
+```
+
 Or use the low-level selector directly. A reranker is any callable
 `(query, heading, candidates) -> list[float]` (the `RerankFn` type), so you can
-plug in your own cross-encoder instead of laya:
+plug in your own cross-encoder instead of the bundled ones:
 
 ```python
 from domdistill import select_chunks_reranked, LayaReranker

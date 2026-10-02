@@ -47,7 +47,18 @@ def _build_chunker(engine: str, html_content: str, penalty: float) -> HTMLIntent
             splitter_tags=SPLITTER_TAGS,
             rerank_fn=LayaReranker(),
         )
-    raise ValueError(f"unknown engine: {engine!r} (expected 'embedding' or 'laya')")
+    if engine == "tev1":
+        from domdistill.rerank import Tev1Reranker
+
+        return HTMLIntentChunker(
+            html_content,
+            penalty=penalty,
+            splitter_tags=SPLITTER_TAGS,
+            rerank_fn=Tev1Reranker(),
+        )
+    raise ValueError(
+        f"unknown engine: {engine!r} (expected 'embedding', 'laya' or 'tev1')"
+    )
 
 
 def run_engine(

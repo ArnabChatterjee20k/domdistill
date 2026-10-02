@@ -5,7 +5,7 @@ from .chunker import (
     RankedChunk,
 )
 from .dom_split import split_dom
-from .rerank import LayaReranker
+from .rerank import LayaReranker, Tev1Reranker
 from .selection import (
     DEFAULT_HEADING_WEIGHT,
     DEFAULT_QUERY_WEIGHT,
@@ -26,6 +26,7 @@ __all__ = [
     "MultiSectionChunkResult",
     "RankedChunk",
     "RerankFn",
+    "Tev1Reranker",
     "select_chunks",
     "select_chunks_reranked",
     "split_dom",

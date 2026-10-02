@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from domdistill.chunker import HTMLIntentChunker
-from domdistill.rerank import LayaReranker
+from domdistill.rerank import LayaReranker, Tev1Reranker, _normalize_ollama_host
 from domdistill.selection import (
     build_chunk_candidates,
     score_candidates_rerank,
@@ -99,3 +99,27 @@ def test_laya_reranker_is_import_safe_without_model():
     # Constructing and calling with no candidates must not import/load laya.
     reranker = LayaReranker()
     assert reranker("query", "heading", []) == []
+
+
+def test_tev1_reranker_empty_candidates_makes_no_request():
+    # No candidates => no HTTP call to Ollama.
+    reranker = Tev1Reranker(host="http://ollama.invalid:11434")
+    assert reranker("query", "heading", []) == []
+
+
+def test_normalize_ollama_host_adds_scheme():
+    assert _normalize_ollama_host("localhost:11434") == "http://localhost:11434"
+    assert _normalize_ollama_host("http://h:1/") == "http://h:1"
+    assert _normalize_ollama_host("https://h:1") == "https://h:1"
+
+
+def test_tev1_reranker_scores_candidates_with_stubbed_transport(monkeypatch):
+    # Stub _score_one so we exercise __call__ ordering without a live server.
+    reranker = Tev1Reranker(max_workers=1)
+
+    def _fake_score(query: str, candidate: str) -> float:
+        return float(len(candidate))
+
+    monkeypatch.setattr(reranker, "_score_one", _fake_score)
+    scores = reranker("q", "h", ["ab", "abcd"])
+    assert scores == [2.0, 4.0]
